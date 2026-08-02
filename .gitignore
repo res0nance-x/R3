@@ -1,0 +1,48 @@
+# Build outputs
+build/
+**/build/
+out/
+bin/
+.cxx/
+
+# Gradle
+.gradle/
+local.properties
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDEs & Editors
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.eclipse/
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+# Kotlin
+.kotlin/
+kotlin-js-store/
+
+# Logs & Temp files
+*.log
+*.tmp
+*.swp
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Secrets & Signing
+*.jks
+*.keystore
