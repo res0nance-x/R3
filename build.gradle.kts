@@ -13,9 +13,24 @@ dependencies {
 	testImplementation(kotlin("test"))
 }
 
-kotlin {
-	jvmToolchain(26)
+sourceSets {
+	main {
+		java.srcDirs("src/main/kotlin")
+		kotlin.srcDirs("src/main/kotlin")
+	}
 }
+
+tasks.withType<Jar> {
+	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+
+
+
+kotlin {
+	jvmToolchain(25)
+}
+
 
 tasks.test {
 	useJUnitPlatform()
