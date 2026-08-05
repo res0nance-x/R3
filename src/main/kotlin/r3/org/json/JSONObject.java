@@ -3475,9 +3475,9 @@ public class JSONObject {
     /**
      * Converts a String to an Enum value.
      */
+    @SuppressWarnings("unchecked")
     private <E> E stringToEnum(Class<?> enumClass, String value) throws JSONException {
         try {
-            @SuppressWarnings("unchecked")
             Class<E> enumType = (Class<E>) enumClass;
             Method valueOfMethod = enumType.getMethod("valueOf", String.class);
             return (E) valueOfMethod.invoke(null, value);
