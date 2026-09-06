@@ -2,7 +2,7 @@ plugins {
 	kotlin("jvm") version "2.4.0"
 }
 
-group = "org.example"
+group = "R3"
 version = "1.0-SNAPSHOT"
 
 repositories {
@@ -23,9 +23,6 @@ sourceSets {
 tasks.withType<Jar> {
 	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
-
-
-
 
 kotlin {
 	jvmToolchain(25)
