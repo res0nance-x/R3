@@ -41,6 +41,7 @@ xhtml,application/xhtml+xml
 csv,text/csv
 ts,text/plain;charset=utf-8
 txt,text/plain;charset=utf-8
+md,text/markdown;charset=utf-8
 rtf,application/rtf
 doc,application/msword
 docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document
