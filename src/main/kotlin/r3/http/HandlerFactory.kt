@@ -1,5 +1,6 @@
 package r3.http
 
+import org.nanohttpd.protocols.http.response.Response
 import r3.content.*
 import r3.io.log
 import r3.org.json.JSONArray
@@ -109,20 +110,35 @@ object HandlerFactory {
 	@ContentHandlerAnnotation("file")
 	fun createFileHandler(dir: File, prefix: String = "/"): ContentHandler {
 		val normPrefix = "/" + prefix.trim('/').let { if (it.isEmpty()) "" else "$it/" }
-		return ContentHandler { header: JSONObject, content: Content? ->
-			val path = header.optString("path", null)
-			// Match exact prefix, subpath, or prefix without the trailing slash
-			val matchesPrefix = path.startsWith(normPrefix) || path == normPrefix.removeSuffix("/")
-			if (matchesPrefix) {
-				val subPath = if (path.startsWith(normPrefix)) path.substring(normPrefix.length) else ""
-				val file = resolveFile(dir, subPath)
-				if (file.isFile) {
-					FileContent(file)
+		return object : ContentHandler {
+			override fun handle(header: JSONObject, content: Content?): Content? {
+				val path = header.optString("path", null)
+				// Match exact prefix, subpath, or prefix without the trailing slash
+				val matchesPrefix = path.startsWith(normPrefix) || path == normPrefix.removeSuffix("/")
+				return if (matchesPrefix) {
+					val subPath = if (path.startsWith(normPrefix)) path.substring(normPrefix.length) else ""
+					val file = resolveFile(dir, subPath)
+					if (file.isFile) {
+						FileContent(file)
+					} else {
+						null
+					}
 				} else {
 					null
 				}
-			} else {
-				null
+			}
+
+			override fun onResponse(header: JSONObject, response: Response) {
+				val path = header.optString("path", "")
+				if (path.endsWith(".html", ignoreCase = true) || path.endsWith("/") || path.isEmpty()) {
+					// Configured at handler level because WebServer only invokes onResponse on the
+					// handler that produces content. App server policy permits local WS/HTTP API connections
+					// while blocking all remote network access.
+					response.addHeader(
+						"Content-Security-Policy",
+						"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self' ws: http://localhost:* http://127.0.0.1:*; object-src 'none'; base-uri 'self';"
+					)
+				}
 			}
 		}
 	}
@@ -189,26 +205,41 @@ object HandlerFactory {
 	}
 
 	fun createPackHandler(pack: Pack): ContentHandler {
-		return ContentHandler { header, content ->
-			val path = header.optString("path") ?: error("No Path")
-			val key = path.substring(1)
-			if (key == "pack_list") {
-				val json = JSONArray()
-				for (k in pack.keys) {
-					val content = pack[k] ?: BinaryContent(ByteArray(0), "empty.bin", "bin")
-					json.put(JSONObject().apply {
-						put("path", content.path)
-						put("type", content.getMimeType())
-						put("length", content.length)
-						put("lastModified", content.lastModified)
-					})
+		return object : ContentHandler {
+			override fun handle(header: JSONObject, content: Content?): Content? {
+				val path = header.optString("path") ?: error("No Path")
+				val key = path.substring(1)
+				return if (key == "pack_list") {
+					val json = JSONArray()
+					for (k in pack.keys) {
+						val itemContent = pack[k] ?: BinaryContent(ByteArray(0), "empty.bin", "bin")
+						json.put(JSONObject().apply {
+							put("path", itemContent.path)
+							put("type", itemContent.getMimeType())
+							put("length", itemContent.length)
+							put("lastModified", itemContent.lastModified)
+						})
+					}
+					BinaryContent(json.toString(2).toByteArray(), "pack_list.json", "json")
+				} else {
+					pack[key]
 				}
-				BinaryContent(json.toString(2).toByteArray(), "pack_list.json", "json")
-			} else {
-				pack[key]
+			}
+
+			override fun onResponse(header: JSONObject, response: Response) {
+				val path = header.optString("path", "")
+				if (path.endsWith(".html", ignoreCase = true) || path.endsWith("/") || path.isEmpty()) {
+					// PackViewer uses a distinct policy: allows unsafe-eval/inline for third-party pack
+					// content/templates, but strictly blocks network connections (connect-src 'self' only).
+					response.addHeader(
+						"Content-Security-Policy",
+						"default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval'; img-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'self';"
+					)
+				}
 			}
 		}
 	}
+
 	fun createWelcomeHandler(): ContentHandler {
 		return object : ContentHandler {
 			override fun handle(header: JSONObject, content: Content?): Content? {
@@ -227,6 +258,14 @@ object HandlerFactory {
 					""".trimIndent())
 				}
 				return null
+			}
+
+			override fun onResponse(header: JSONObject, response: Response) {
+				// Matches PackViewer CSP policy
+				response.addHeader(
+					"Content-Security-Policy",
+					"default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval'; img-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'self';"
+				)
 			}
 		}
 	}
