@@ -3,6 +3,7 @@ package r3.http
 import org.nanohttpd.protocols.http.response.Response
 import r3.content.*
 import r3.io.log
+import r3.key.Key128
 import r3.org.json.JSONArray
 import r3.org.json.JSONObject
 import r3.pack.Pack
@@ -244,7 +245,8 @@ object HandlerFactory {
 		return object : ContentHandler {
 			override fun handle(header: JSONObject, content: Content?): Content? {
 				if (header.optString("path") == "/") {
-					return HTMLContent("""
+					return HTMLContent(
+						"""
 						<!DOCTYPE html>
 						<html>
 						<head>
@@ -255,7 +257,8 @@ object HandlerFactory {
 							<p>Redirecting to <a href="index.html">index.html</a>...</p>
 						</body>
 						</html>
-					""".trimIndent())
+					""".trimIndent()
+					)
 				}
 				return null
 			}
