@@ -272,4 +272,19 @@ object HandlerFactory {
 			}
 		}
 	}
+
+	@JvmOverloads
+	fun createHostOriginHandler(allowedHosts: Set<String> = setOf("localhost", "127.0.0.1", "::1")): HostOriginHandler {
+		return HostOriginHandler(allowedHosts)
+	}
+
+	@JvmOverloads
+	fun createAuthHandler(
+		startupKey: Key128 = Key128.randomKey(),
+		authSecret: Key128 = Key128.randomKey(),
+		cookieName: String = "graffiti_token",
+		redirectTo: String = "/index.html"
+	): AuthorizationHandler {
+		return AuthorizationHandler(startupKey, authSecret, cookieName, redirectTo)
+	}
 }

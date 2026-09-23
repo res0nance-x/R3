@@ -160,6 +160,10 @@ class WebServer(
 	}
 
 	override fun openWebSocket(handshake: IHTTPSession): WebSocket {
+		val header = toHeader(handshake)
+		for (h in handlers) {
+			h.handle(header, null)
+		}
 		return ContentWebSocketHandler(handshake, webSocketList, handlers)
 	}
 
@@ -168,6 +172,18 @@ class WebServer(
 			Logger.getLogger(NanoHTTPD::class.java.name).filter = Filter {
 				it.message != "Could not send response to the client"
 			}
+		}
+	}
+
+	override fun serve(session: IHTTPSession): Response {
+		return try {
+			super.serve(session)
+		} catch (e: HttpException) {
+			val response = newFixedLengthResponse(e.status, "text/plain", e.message)
+			for ((k, v) in e.headers) {
+				response.addHeader(k, v)
+			}
+			response
 		}
 	}
 
@@ -201,6 +217,8 @@ class WebServer(
 			for (h in handlers) {
 				val responseContent = try {
 					h.handle(header, content)
+				} catch (e: HttpException) {
+					throw e
 				} catch (e: Exception) {
 					log("handler exception - $e")
 					null
@@ -211,6 +229,8 @@ class WebServer(
 					return response
 				}
 			}
+		} catch (e: HttpException) {
+			throw e
 		} catch (e: Exception) {
 			log("Exception processing request: ${session.uri} - $e")
 		} finally {
