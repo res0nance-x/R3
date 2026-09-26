@@ -8,6 +8,7 @@ import java.io.*
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.LinkedBlockingDeque
+import java.util.concurrent.atomic.AtomicInteger
 
 class TCPNode(
 	private val socket: Socket,
@@ -37,6 +38,27 @@ class TCPNode(
 	var lastActivityMs: Long = System.currentTimeMillis()
 		private set
 
+	@Volatile
+	var lastWriteMs: Long = System.currentTimeMillis()
+		private set
+
+	private val activeSendStreams = AtomicInteger(0)
+
+	val activeReceiveStreams: Int
+		get() = blockHandler.activeStreamsCount
+
+	fun isTransferring(): Boolean = activeSendStreams.get() > 0 || blockHandler.activeStreamsCount > 0
+
+	@Volatile
+	var onTransferStateChanged: ((isTransferring: Boolean) -> Unit)? = null
+
+	private fun notifyTransferState() {
+		val transferring = isTransferring()
+		try {
+			onTransferStateChanged?.invoke(transferring)
+		} catch (_: Exception) {}
+	}
+
 	/**
 	 * Called exactly once when this node closes (remote disconnect, timeout, or explicit close).
 	 * Cleared immediately before invocation so it can never fire twice.
@@ -45,6 +67,8 @@ class TCPNode(
 	var onClose: (() -> Unit)? = null
 
 	init {
+		blockHandler.onStreamCountChanged = { notifyTransferState() }
+
 		pthread {
 			try {
 				while (!Thread.currentThread().isInterrupted) {
@@ -69,6 +93,7 @@ class TCPNode(
 						break
 					}
 					block.write(dos)
+					lastWriteMs = System.currentTimeMillis()
 					if (outDeque.isEmpty()) {
 						dos.flush()
 					}
@@ -87,6 +112,12 @@ class TCPNode(
 		if (closeRequested) return
 		val id = srnd.nextLong() and 0x7fffffffffffffff
 		send(TCPBlock(id, header, true))
+	}
+
+	fun sendPriority(header: ByteArray) {
+		if (closeRequested) return
+		val id = srnd.nextLong() and 0x7fffffffffffffff
+		sendPriority(TCPBlock(id, header, true))
 	}
 
 	fun send(header: ByteArray, file: File) {
@@ -117,21 +148,32 @@ class TCPNode(
 
 	fun send(header: ByteArray, istream: InputStream) {
 		if (closeRequested) return
-		val id = srnd.nextLong() and 0x7fffffffffffffff
-		val block = TCPBlock(id, header, false)
-		send(block)
-		val arr = ByteArray(16384)
-		var read: Int
-		var last = false
-		while (!last) {
-			read = istream.readMaxBytes(arr)
-			last = read < arr.size
-			send(TCPBlock(id, arr.copyOf(read), last))
+		activeSendStreams.incrementAndGet()
+		notifyTransferState()
+		try {
+			val id = srnd.nextLong() and 0x7fffffffffffffff
+			val block = TCPBlock(id, header, false)
+			send(block)
+			val arr = ByteArray(16384)
+			var read: Int
+			var last = false
+			while (!last) {
+				read = istream.readMaxBytes(arr)
+				last = read < arr.size
+				send(TCPBlock(id, arr.copyOf(read), last))
+			}
+		} finally {
+			activeSendStreams.decrementAndGet()
+			notifyTransferState()
 		}
 	}
 
 	fun send(block: TCPBlock) {
 		outDeque.put(block)
+	}
+
+	fun sendPriority(block: TCPBlock) {
+		outDeque.putFirst(block)
 	}
 
 	fun forceClose() {

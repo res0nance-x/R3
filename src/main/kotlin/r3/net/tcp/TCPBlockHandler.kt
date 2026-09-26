@@ -71,6 +71,20 @@ internal class TCPBlockHandler(
 	)
 
 	private val map = HashMap<Long, StreamData>()
+
+	val activeStreamsCount: Int
+		get() = synchronized(map) { map.size }
+
+	@Volatile
+	var onStreamCountChanged: ((Int) -> Unit)? = null
+
+	private fun notifyStreamCountChanged() {
+		val count = activeStreamsCount
+		try {
+			onStreamCountChanged?.invoke(count)
+		} catch (_: Exception) {}
+	}
+
 	private fun createTempFile(): File {
 		// Use JVM temp file creation inside the dedicated temp base directory to avoid collisions
 		return try {
@@ -87,6 +101,7 @@ internal class TCPBlockHandler(
 	private fun pruneStaleStreams() {
 		val now = System.currentTimeMillis()
 		val toRemove = mutableListOf<Long>()
+		var prunedAny = false
 		synchronized(map) {
 			for ((id, sd) in map) {
 				if (now - sd.lastWrite > streamTimeoutMs) {
@@ -96,6 +111,7 @@ internal class TCPBlockHandler(
 			for (id in toRemove) {
 				val sd = map.remove(id)
 				if (sd != null) {
+					prunedAny = true
 					log("TCPBlockHandler: pruning stale stream $id")
 					try {
 						sd.fileStream.delete()
@@ -103,6 +119,9 @@ internal class TCPBlockHandler(
 					}
 				}
 			}
+		}
+		if (prunedAny) {
+			notifyStreamCountChanged()
 		}
 	}
 
@@ -125,6 +144,7 @@ internal class TCPBlockHandler(
 							System.currentTimeMillis()
 						)
 					}
+					notifyStreamCountChanged()
 				}
 			} else {
 				// if here then we must have already received the header and so are now writing the stream
@@ -138,7 +158,10 @@ internal class TCPBlockHandler(
 					throw err
 				}
 				if (block.last) { // if last block then done writing stream
-					map.remove(block.id)
+					synchronized(map) {
+						map.remove(block.id)
+					}
+					notifyStreamCountChanged()
 					try {
 						streamData.fileStream.close()
 						// Schedule deletion on JVM exit in case the content handler exits the process
@@ -171,6 +194,7 @@ internal class TCPBlockHandler(
 					map.remove(block.id)
 				}
 				if (sd != null) {
+					notifyStreamCountChanged()
 					try {
 						sd.fileStream.close()
 					} catch (_: Exception) {
@@ -196,5 +220,6 @@ internal class TCPBlockHandler(
 			}
 			map.clear()
 		}
+		notifyStreamCountChanged()
 	}
 }
