@@ -44,10 +44,17 @@ class TCPNode(
 
 	private val activeSendStreams = AtomicInteger(0)
 
+	val activeSendStreamsCount: Int
+		get() = activeSendStreams.get()
+
 	val activeReceiveStreams: Int
 		get() = blockHandler.activeStreamsCount
 
-	fun isTransferring(): Boolean = activeSendStreams.get() > 0 || blockHandler.activeStreamsCount > 0
+	fun isSending(): Boolean = activeSendStreams.get() > 0
+
+	fun isReceiving(): Boolean = blockHandler.activeStreamsCount > 0
+
+	fun isTransferring(): Boolean = isSending() || isReceiving()
 
 	@Volatile
 	var onTransferStateChanged: ((isTransferring: Boolean) -> Unit)? = null
