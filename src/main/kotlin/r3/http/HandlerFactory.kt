@@ -88,22 +88,10 @@ annotation class ContentHandlerAnnotation(
 object HandlerFactory {
 	private val dtf = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
 
+	@JvmOverloads
 	@ContentHandlerAnnotation("log")
-	fun createLogRouter(): ContentHandler {
-		return ContentHandler { header: JSONObject, content: Content? ->
-			val param = header.optJSONObject("param")
-			val paramStr = param?.toString() ?: ""
-			val sb = StringBuilder()
-			sb.append(LocalDateTime.now().format(dtf)).append(", ")
-			sb.append(header.optString("remote-ip")).append(", ")
-			sb.append(header.getString("path")).append(" ").append(paramStr)
-			log(sb.toString())
-			if (content != null) {
-				val contentMeta = content.meta.toString()
-				log(contentMeta)
-			}
-			null
-		}
+	fun createLogRouter(errorsOnly: Boolean = false): ContentHandler {
+		return RequestLogRouter(errorsOnly)
 	}
 
 	// prefix must start and end with '/'

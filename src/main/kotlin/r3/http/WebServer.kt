@@ -176,15 +176,24 @@ class WebServer(
 	}
 
 	override fun serve(session: IHTTPSession): Response {
-		return try {
+		val header = toHeader(session)
+		val response = try {
 			super.serve(session)
 		} catch (e: HttpException) {
-			val response = newFixedLengthResponse(e.status, "text/plain", e.message)
+			val res = newFixedLengthResponse(e.status, "text/plain", e.message)
 			for ((k, v) in e.headers) {
-				response.addHeader(k, v)
+				res.addHeader(k, v)
 			}
-			response
+			res
 		}
+		for (h in handlers) {
+			try {
+				h.onResponse(header, response)
+			} catch (e: Exception) {
+				log("Error in handler onResponse", e)
+			}
+		}
+		return response
 	}
 
 	override fun serveHttp(session: IHTTPSession): Response {
@@ -224,9 +233,7 @@ class WebServer(
 					null
 				}
 				if (responseContent != null) {
-					val response = rangeRequestResponse(session, responseContent)
-					h.onResponse(header, response)
-					return response
+					return rangeRequestResponse(session, responseContent)
 				}
 			}
 		} catch (e: HttpException) {
