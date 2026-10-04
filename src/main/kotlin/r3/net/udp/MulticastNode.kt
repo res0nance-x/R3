@@ -70,7 +70,7 @@ class MulticastNode(
 				}
 			} catch (e: Exception) {
 				// might be a packet not intended for us, or could be our error
-				e.printStackTrace()
+				r3.io.log("MulticastNode packet error", e)
 				warningMessage(e)
 			}
 		}

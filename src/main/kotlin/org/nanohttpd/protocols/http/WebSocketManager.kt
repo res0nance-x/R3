@@ -72,7 +72,7 @@ class WebSocketManager {
 			}
 
 			override fun onException(exception: IOException) {
-				exception.printStackTrace()
+				r3.io.log("WebSocket error: ${exception.message}", exception)
 			}
 		}
 		socket

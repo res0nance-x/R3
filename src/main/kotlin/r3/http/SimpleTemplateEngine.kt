@@ -24,9 +24,9 @@ class SimpleTemplateEngine(private val templateMap: SimpleMap<String, String>) {
 		val warnings = mutableSetOf<String>()
 		val result = renderInternal(templatePath, context, HashSet(), warnings)
 		if (warnings.isNotEmpty()) {
-			// Print warnings to stderr for visibility in logs
-			System.err.println("Template engine warnings for '$templatePath':")
-			for (w in warnings) System.err.println("  - $w")
+			// Print warnings via log for visibility in logs
+			r3.io.log("Template engine warnings for '$templatePath':")
+			for (w in warnings) r3.io.log("  - $w")
 			// Do not append warnings into the rendered output; return the result only
 			return result
 		}
