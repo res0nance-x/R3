@@ -10,12 +10,15 @@ class EncryptedContinuousOutputStream(val seq: EncryptedSequence, val ostream: O
 	constructor(pass: Password256, ostream: OutputStream, initialPos: Long = 0L) : this(EncryptedSequence.createSequence(pass), ostream, initialPos)
 
 	override fun write(b: ByteArray, off: Int, len: Int) {
-		val arr = ByteArray(len) { (b[off + it].toInt() xor seq.get(pos++).toInt()).toByte() }
+		val arr = ByteArray(len)
+		System.arraycopy(b, off, arr, 0, len)
+		seq.xor(arr, 0, len, pos)
+		pos += len
 		ostream.write(arr)
 	}
 
 	override fun write(b: Int) {
-		ostream.write(b xor seq.get(pos++).toInt())
+		ostream.write(b xor (seq.get(pos++).toInt() and 0xFF))
 	}
 
 	override fun close() {

@@ -9,12 +9,11 @@ class EncryptedContinuousInputStream(val seq: EncryptedSequence, val istream: In
 	private var pos = 0L
 	override fun read(b: ByteArray, off: Int, len: Int): Int {
 		val n = istream.readFixedBytes(b, off, len)
-		repeat(n) {
-			b[off + it] = (b[off + it].toInt() xor (seq.get(pos++).toInt() and 0xFF)).toByte()
-		}
-		if (n == 0) {
+		if (n <= 0) {
 			return -1
 		}
+		seq.xor(b, off, n, pos)
+		pos += n
 		return n
 	}
 
