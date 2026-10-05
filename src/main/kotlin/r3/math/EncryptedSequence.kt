@@ -56,7 +56,7 @@ class EncryptedSequenceHeader(private val hardPass: Password256, val m: LMatrix?
 	}
 }
 
-class EncryptedSequence(val pass: Password256, val m: LMatrix? = null) {
+open class EncryptedSequence(val pass: Password256, val m: LMatrix? = null) : AutoCloseable {
 	private val cipherKey = createCipherKey(pass)
 	private val aesKey = SecretKeySpec(cipherKey.key, "AES")
 	// Use AES/ECB/NoPadding to encrypt each 16-byte counter block independently (AES-CTR)
@@ -72,7 +72,7 @@ class EncryptedSequence(val pass: Password256, val m: LMatrix? = null) {
 	private var currentBlock = ByteArray(BLOCKSIZE)
 	private var blockNum = -1L
 
-	private fun getBlock(n: Long): ByteArray {
+	open fun getBlock(n: Long): ByteArray {
 		if (n == blockNum) {
 			return currentBlock
 		}
@@ -88,7 +88,7 @@ class EncryptedSequence(val pass: Password256, val m: LMatrix? = null) {
 		return currentBlock
 	}
 
-	fun get(pos: Long): Byte {
+	open fun get(pos: Long): Byte {
 		val num = pos / BLOCKSIZE
 		if (num != blockNum) {
 			currentBlock = getBlock(num)
@@ -96,7 +96,7 @@ class EncryptedSequence(val pass: Password256, val m: LMatrix? = null) {
 		return currentBlock[(pos % BLOCKSIZE).toInt()]
 	}
 
-	fun xor(b: ByteArray, off: Int, len: Int, streamPos: Long) {
+	open fun xor(b: ByteArray, off: Int, len: Int, streamPos: Long) {
 		var curPos = streamPos
 		var curOff = off
 		var remaining = len
@@ -116,10 +116,12 @@ class EncryptedSequence(val pass: Password256, val m: LMatrix? = null) {
 		}
 	}
 
+	override fun close() {}
+
 	companion object {
 		const val BLOCKSIZE = 4096
 		fun createSequence(pass: Password256): EncryptedSequence {
-			return EncryptedSequence(pass)
+			return PrefetchedEncryptedSequence(pass)
 		}
 	}
 }

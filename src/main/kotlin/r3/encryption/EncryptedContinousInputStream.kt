@@ -36,6 +36,10 @@ class EncryptedContinuousInputStream(val seq: EncryptedSequence, val istream: In
 	}
 
 	override fun close() {
-		istream.close()
+		try {
+			seq.close()
+		} finally {
+			istream.close()
+		}
 	}
 }

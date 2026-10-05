@@ -22,6 +22,10 @@ class EncryptedContinuousOutputStream(val seq: EncryptedSequence, val ostream: O
 	}
 
 	override fun close() {
-		ostream.close()
+		try {
+			seq.close()
+		} finally {
+			ostream.close()
+		}
 	}
 }
