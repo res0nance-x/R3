@@ -1,7 +1,7 @@
 package r3.io
 
 var log: (String) -> Unit = { msg: String -> println(msg) }
-var debug: (String) -> Unit = { msg: String -> println("[DEBUG] $msg") }
+var debug: (String) -> Unit = {}
 var logError: (String, Throwable?) -> Unit = { msg: String, e: Throwable? ->
 	if (e != null) {
 		println("[ERROR] $msg: ${e.message}")
