@@ -178,22 +178,25 @@ fun InputStream.readAll(): ByteArray {
 }
 
 fun InputStream.skipFullBytes(n: Long) {
-	var skp = n
-	if (skp > 0) {
-		val ns: Long = skip(skp)
-		if (ns in 0 until skp) { // skipped too few bytes
-			// adjust number to skip
-			skp -= ns
-			// read until requested number skipped or EOS reached
-			while (skp > 0 && read() != -1) {
-				skp--
+	if (n <= 0) return
+	var remaining = n
+	var buf: ByteArray? = null
+	while (remaining > 0) {
+		val ns = skip(remaining)
+		if (ns > 0) {
+			remaining -= ns
+		} else if (ns == 0L) {
+			if (buf == null) {
+				buf = ByteArray(minOf(remaining, 65536L).toInt())
 			}
-			// if not enough skipped, then EOFE
-			if (skp != 0L) {
-				throw EOFException()
+			val toRead = minOf(remaining, buf.size.toLong()).toInt()
+			val read = read(buf, 0, toRead)
+			if (read < 0) {
+				throw EOFException("Unexpected EOF while skipping $n bytes (remaining: $remaining)")
 			}
-		} else if (ns != skp) { // skipped negative or too many bytes
-			throw IOException("Unable to skip exactly")
+			remaining -= read
+		} else {
+			throw IOException("Unable to skip negative bytes: $ns")
 		}
 	}
 }
