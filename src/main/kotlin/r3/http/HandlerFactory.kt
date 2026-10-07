@@ -2,13 +2,12 @@ package r3.http
 
 import org.nanohttpd.protocols.http.response.Response
 import r3.content.*
-import r3.io.log
 import r3.key.Key128
 import r3.org.json.JSONArray
 import r3.org.json.JSONObject
 import r3.pack.Pack
+import r3.pack.PackMap
 import java.io.File
-import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
 fun resolveFile(dir: File, path: String): File {
@@ -195,13 +194,14 @@ object HandlerFactory {
 
 	fun createPackHandler(pack: Pack): ContentHandler {
 		return object : ContentHandler {
+			val contentList = pack.toList().sortedWith { a, b -> a.path.compareTo(b.path) }
+			val packMap = PackMap(contentList)
 			override fun handle(header: JSONObject, content: Content?): Content? {
 				val path = header.optString("path") ?: error("No Path")
 				val key = path.substring(1)
 				return if (key == "pack_list") {
 					val json = JSONArray()
-					for (k in pack.keys) {
-						val itemContent = pack[k] ?: BinaryContent(ByteArray(0), "empty.bin", "bin")
+					for (itemContent in contentList) {
 						json.put(JSONObject().apply {
 							put("path", itemContent.path)
 							put("type", itemContent.getMimeType())
@@ -211,7 +211,7 @@ object HandlerFactory {
 					}
 					BinaryContent(json.toString(2).toByteArray(), "pack_list.json", "json")
 				} else {
-					pack[key]
+					packMap[key]
 				}
 			}
 

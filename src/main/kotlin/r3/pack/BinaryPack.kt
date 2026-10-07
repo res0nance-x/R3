@@ -1,6 +1,5 @@
 package r3.pack
 
-import r3.collection.HashSimpleMap
 import r3.content.Content
 import r3.content.ContentMeta
 import r3.io.*
@@ -12,7 +11,7 @@ import java.io.InputStream
 import java.time.Instant
 
 open class BinaryPack(val src: Source) : Pack, Writable {
-	protected val map = HashSimpleMap<String, Content>()
+	protected val contentList = ArrayList<Content>()
 
 	init {
 		val cis = CountingInputStream(src.createInputStream())
@@ -22,10 +21,8 @@ open class BinaryPack(val src: Source) : Pack, Writable {
 					val header = ContentMeta.read(stream)
 					if (header.length < 0) {
 						throw Exception("Invalid ContentHeader length ${header.length}")
-					} else if (header.length == 0L) {
-						map.remove(header.name)
 					} else {
-						map[header.name] = object : Content {
+						contentList.add(object : Content {
 							override val path: String = header.name
 							override val ext: String = header.type
 							override val lastModified: Long = Instant.now().toEpochMilli()
@@ -43,7 +40,7 @@ open class BinaryPack(val src: Source) : Pack, Writable {
 							override fun toString(): String {
 								return "$path $ext $length"
 							}
-						}
+						})
 						cis.skipFullBytes(header.length)
 					}
 				}
@@ -53,25 +50,16 @@ open class BinaryPack(val src: Source) : Pack, Writable {
 		}
 	}
 
-	override val size: Int
-		get() {
-			return map.size
-		}
-	override val keys: Set<String>
-		get() = HashSet(map.keys)
-
-	override fun get(key: String): Content? {
-		return map[key]
-	}
-
-	override fun visit(visitor: (String, Content) -> Unit) {
-		map.visit(visitor)
-	}
+	override val size: Int = contentList.size
 
 	override fun write(dos: DataOutputStream) {
 		src.createInputStream().use {
 			it.copyTo(dos)
 		}
+	}
+
+	override fun iterator(): Iterator<Content> {
+		return contentList.iterator()
 	}
 
 	companion object {
@@ -91,22 +79,6 @@ open class BinaryPack(val src: Source) : Pack, Writable {
 					}
 				}
 			}
-		}
-
-		fun append(
-			content: Iterable<Content>, sink: Sink,
-			progress: (Int) -> Unit = { _ -> }
-		) {
-			create(content, sink, progress)
-		}
-
-		fun append(
-			pack: Pack, sink: Sink,
-			progress: (Int) -> Unit = { _ -> }
-		) {
-			val list = mutableListOf<Content>()
-			pack.visit { _, content -> list.add(content) }
-			append(list, sink, progress)
 		}
 	}
 }
