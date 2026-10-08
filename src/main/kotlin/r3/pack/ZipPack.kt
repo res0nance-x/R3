@@ -18,7 +18,6 @@ class ZipPack(file: File) : Pack {
 		}
 	}
 
-	override val size: Int = list.size
 	override fun iterator(): Iterator<Content> {
 		return list.iterator()
 	}

@@ -58,13 +58,11 @@ open class BinaryPack(val src: Source) : Pack, Writable {
 				} catch (_: java.io.EOFException) {
 					// Normal end of pack
 				} catch (e: Exception) {
-					log("BIdNCUxy5sw: $e")
+					log(e)
 				}
 			}
 		}
 	}
-
-	override val size: Int = contentList.size
 
 	override fun write(dos: DataOutputStream) {
 		src.createInputStream().use {
