@@ -17,14 +17,14 @@ fun Source.hashKey(): Key256 {
 fun Source.copyTo(sink: Sink) {
 	sink.createOutputStream().use { ostream ->
 		this.createInputStream().use { istream ->
-			istream.copyTo(ostream)
+			istream.copyTo(ostream, 4 * 1024 * 1024)
 		}
 	}
 }
 
 fun Source.copyTo(ostream: OutputStream) {
 	this.createInputStream().use { istream ->
-		istream.copyTo(ostream)
+		istream.copyTo(ostream, 4 * 1024 * 1024)
 	}
 }
 
