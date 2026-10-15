@@ -7,6 +7,7 @@ import org.nanohttpd.protocols.http.response.Response
 import org.nanohttpd.protocols.http.response.Response.newFixedLengthResponse
 import org.nanohttpd.protocols.http.response.Status
 import r3.content.Content
+import r3.io.DEFAULT_COPY_BUFFER_SIZE
 import r3.io.BoundedInputStream
 import r3.io.log
 import java.io.BufferedInputStream
@@ -226,7 +227,7 @@ fun rangeRequestResponse(session: IHTTPSession, content: Content): Response {
                 }
                 newFixedLengthResponse(
                     Status.PARTIAL_CONTENT, mimeType,
-                    BufferedInputStream(BoundedInputStream(stream, newLen)), newLen
+                    BufferedInputStream(BoundedInputStream(stream, newLen), DEFAULT_COPY_BUFFER_SIZE), newLen
                 ).apply {
                     addHeader("Accept-Ranges", "bytes")
                     addHeader("Content-Range", "bytes ${reqStart}-${reqEnd}/${content.length}")
@@ -260,7 +261,7 @@ fun rangeRequestResponse(session: IHTTPSession, content: Content): Response {
                 }
             } else {
                 val istream = if (session.method != Method.HEAD) {
-                    BufferedInputStream(content.createInputStream())
+                    BufferedInputStream(content.createInputStream(), DEFAULT_COPY_BUFFER_SIZE)
                 } else {
                     ByteArrayInputStream(ByteArray(0))
                 }

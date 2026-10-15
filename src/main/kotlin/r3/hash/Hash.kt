@@ -1,12 +1,13 @@
 package r3.hash
 
+import r3.io.DEFAULT_COPY_BUFFER_SIZE
 import java.io.File
 import java.io.FileInputStream
 import java.io.InputStream
 import java.security.MessageDigest
 
 fun hash(md: MessageDigest, inStream: InputStream): ByteArray {
-	val buf = ByteArray(8192)
+	val buf = ByteArray(DEFAULT_COPY_BUFFER_SIZE)
 	var read = inStream.read(buf)
 	while (read > -1) {
 		md.update(buf, 0, read)
@@ -16,14 +17,14 @@ fun hash(md: MessageDigest, inStream: InputStream): ByteArray {
 }
 
 fun File.hash256(): ByteArray {
-	FileInputStream(this).use {
+	FileInputStream(this).buffered(DEFAULT_COPY_BUFFER_SIZE).use {
 		return it.hash256()
 	}
 }
 
 fun InputStream.lengthAndHash256(): Pair<Long, ByteArray> {
 	val md = MessageDigest.getInstance("SHA-256")
-	val buf = ByteArray(8192)
+	val buf = ByteArray(DEFAULT_COPY_BUFFER_SIZE)
 	var length = 0L
 	var read = read(buf)
 	while (read > -1) {
@@ -36,7 +37,7 @@ fun InputStream.lengthAndHash256(): Pair<Long, ByteArray> {
 
 fun InputStream.hash256(): ByteArray {
 	val md = MessageDigest.getInstance("SHA-256")
-	val buf = ByteArray(8192)
+	val buf = ByteArray(DEFAULT_COPY_BUFFER_SIZE)
 	var read = read(buf)
 	while (read > -1) {
 		md.update(buf, 0, read)
@@ -47,7 +48,7 @@ fun InputStream.hash256(): ByteArray {
 
 fun InputStream.hash128(): ByteArray {
 	val md = MessageDigest.getInstance("SHA-256")
-	val buf = ByteArray(8192)
+	val buf = ByteArray(DEFAULT_COPY_BUFFER_SIZE)
 	var read = read(buf)
 	while (read > -1) {
 		md.update(buf, 0, read)

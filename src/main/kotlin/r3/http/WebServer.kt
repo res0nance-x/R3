@@ -12,6 +12,7 @@ import r3.content.Content
 import r3.content.FileContent
 import r3.content.JsonContent
 import r3.io.BoundedInputStream
+import r3.io.DEFAULT_COPY_BUFFER_SIZE
 import r3.io.DoNotCloseInputStream
 import r3.io.createOutputStream
 import r3.io.log
@@ -213,8 +214,8 @@ class WebServer(
 				BinaryContent(arr, session.uri, ext)
 			} else {
 				val tmpFile = File(tmpFileDir, name)
-				tmpFile.createOutputStream().use {
-					istream.copyTo(it)
+				tmpFile.createOutputStream().buffered(DEFAULT_COPY_BUFFER_SIZE).use {
+					istream.copyTo(it, DEFAULT_COPY_BUFFER_SIZE)
 				}
 				FileContent(tmpFile)
 			}

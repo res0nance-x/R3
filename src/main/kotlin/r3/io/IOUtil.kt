@@ -13,6 +13,8 @@ import java.util.concurrent.LinkedBlockingDeque
 import java.util.zip.ZipFile
 import kotlin.io.path.fileSize
 
+const val DEFAULT_COPY_BUFFER_SIZE: Int = 512 * 1024
+
 // ReadNBytes doesn't exist for older Android, so we do it ourselves.
 fun InputStream.readFixedBytes(length: Int): ByteArray {
 	val arr = ByteArray(length)
@@ -183,7 +185,7 @@ fun InputStream.skipFullBytes(n: Long) {
 	var buf: ByteArray? = null
 	while (remaining > 0) {
 		val ns = skip(remaining)
-		if (ns > 0) {
+		if (ns in 1..remaining) {
 			remaining -= ns
 		} else if (ns == 0L) {
 			if (buf == null) {
@@ -194,9 +196,17 @@ fun InputStream.skipFullBytes(n: Long) {
 			if (read < 0) {
 				throw EOFException("Unexpected EOF while skipping $n bytes (remaining: $remaining)")
 			}
-			remaining -= read
+			if (read == 0) {
+				val b = read()
+				if (b < 0) {
+					throw EOFException("Unexpected EOF while skipping $n bytes (remaining: $remaining)")
+				}
+				remaining--
+			} else {
+				remaining -= read
+			}
 		} else {
-			throw IOException("Unable to skip negative bytes: $ns")
+			throw IOException("Unable to skip $remaining bytes (skip returned $ns)")
 		}
 	}
 }

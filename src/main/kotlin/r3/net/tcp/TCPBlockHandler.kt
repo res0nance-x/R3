@@ -16,7 +16,7 @@ internal class TCPBlockHandler(
 	val contentHandler: (TCPNode, ByteArray, File?) -> Unit
 ) : Closeable {
 	class FileStream(val file: File, private val out: OutputStream) : Closeable {
-		constructor(file: File) : this(file, FileOutputStream(file).buffered())
+		constructor(file: File) : this(file, FileOutputStream(file).buffered(r3.io.DEFAULT_COPY_BUFFER_SIZE))
 
 		override fun close() {
 			out.close()

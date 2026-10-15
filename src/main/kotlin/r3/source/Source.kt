@@ -15,16 +15,16 @@ fun Source.hashKey(): Key256 {
 }
 
 fun Source.copyTo(sink: Sink) {
-	sink.createOutputStream().use { ostream ->
-		this.createInputStream().use { istream ->
-			istream.copyTo(ostream, 4 * 1024 * 1024)
+	sink.createOutputStream().buffered(r3.io.DEFAULT_COPY_BUFFER_SIZE).use { ostream ->
+		this.createInputStream().buffered(r3.io.DEFAULT_COPY_BUFFER_SIZE).use { istream ->
+			istream.copyTo(ostream, r3.io.DEFAULT_COPY_BUFFER_SIZE)
 		}
 	}
 }
 
 fun Source.copyTo(ostream: OutputStream) {
-	this.createInputStream().use { istream ->
-		istream.copyTo(ostream, 4 * 1024 * 1024)
+	this.createInputStream().buffered(r3.io.DEFAULT_COPY_BUFFER_SIZE).use { istream ->
+		istream.copyTo(ostream, r3.io.DEFAULT_COPY_BUFFER_SIZE)
 	}
 }
 

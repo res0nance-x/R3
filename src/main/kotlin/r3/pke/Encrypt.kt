@@ -12,10 +12,10 @@ import java.io.*
 object Encrypt {
 	fun encrypt(pass: Password256, source: Source, sink: Sink) {
 		val seq = EncryptedSequence.createSequence(pass)
-		val ostream = sink.createOutputStream()
+		val ostream = sink.createOutputStream().buffered(r3.io.DEFAULT_COPY_BUFFER_SIZE)
 		return EncryptedContinuousOutputStream(seq, ostream).use { out ->
-			BufferedInputStream(source.createInputStream()).use { istream ->
-				istream.copyTo(out)
+			source.createInputStream().buffered(r3.io.DEFAULT_COPY_BUFFER_SIZE).use { istream ->
+				istream.copyTo(out, r3.io.DEFAULT_COPY_BUFFER_SIZE)
 			}
 		}
 	}
@@ -44,10 +44,10 @@ object Encrypt {
 
 	fun decrypt(pass: Password256, source: Source, sink: Sink) {
 		val seq = EncryptedSequence.createSequence(pass)
-		val istream = source.createInputStream().buffered()
+		val istream = source.createInputStream().buffered(r3.io.DEFAULT_COPY_BUFFER_SIZE)
 		EncryptedContinuousInputStream(seq, istream).use { eistream ->
-			BufferedOutputStream(sink.createOutputStream()).use { ostream ->
-				eistream.copyTo(ostream)
+			sink.createOutputStream().buffered(r3.io.DEFAULT_COPY_BUFFER_SIZE).use { ostream ->
+				eistream.copyTo(ostream, r3.io.DEFAULT_COPY_BUFFER_SIZE)
 			}
 		}
 	}

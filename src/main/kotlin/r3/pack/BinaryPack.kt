@@ -5,6 +5,7 @@ import r3.content.ContentMeta
 import r3.io.*
 import r3.source.Sink
 import r3.source.Source
+import r3.source.copyTo
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.InputStream
@@ -14,7 +15,7 @@ open class BinaryPack(val src: Source) : Pack, Writable {
 	protected val contentList = ArrayList<Content>()
 
 	init {
-		src.createInputStream().buffered().let { istream ->
+		src.createInputStream().buffered(DEFAULT_COPY_BUFFER_SIZE).let { istream ->
 			DataInputStream(istream).use { stream ->
 				var currentOffset = 0L
 				try {
@@ -65,9 +66,7 @@ open class BinaryPack(val src: Source) : Pack, Writable {
 	}
 
 	override fun write(dos: DataOutputStream) {
-		src.createInputStream().use {
-			it.copyTo(dos)
-		}
+		src.copyTo(dos)
 	}
 
 	override fun iterator(): Iterator<Content> {
@@ -79,13 +78,13 @@ open class BinaryPack(val src: Source) : Pack, Writable {
 			content: Iterable<Content>, sink: Sink,
 			progress: (Int) -> Unit = { _ -> }
 		) {
-			sink.createOutputStream().buffered().use { ostream ->
+			sink.createOutputStream().buffered(DEFAULT_COPY_BUFFER_SIZE).use { ostream ->
 				val size = content.count().toDouble()
 				DataOutputStream(ostream).use { dos ->
 					var count = 0
 					content.forEach { content ->
 						ContentMeta(content).write(dos)
-						content.createInputStream().use { it.copyTo(dos) }
+						content.createInputStream().buffered(DEFAULT_COPY_BUFFER_SIZE).use { it.copyTo(dos, DEFAULT_COPY_BUFFER_SIZE) }
 						++count
 						progress((count.toDouble() / size * 100).toInt())
 					}

@@ -129,7 +129,7 @@ class TCPNode(
 
 	fun send(header: ByteArray, file: File) {
 		if (closeRequested) return
-		FileInputStream(file).buffered().use {
+		FileInputStream(file).buffered(DEFAULT_COPY_BUFFER_SIZE).use {
 			send(header, it)
 		}
 	}
@@ -148,7 +148,7 @@ class TCPNode(
 
 	fun send(header: ByteArray, source: Source) {
 		if (closeRequested) return
-		source.createInputStream().buffered().use {
+		source.createInputStream().buffered(DEFAULT_COPY_BUFFER_SIZE).use {
 			send(header, it)
 		}
 	}

@@ -3,6 +3,7 @@ package r3.key
 import r3.hash.fromUBase64
 import r3.hash.hash256
 import r3.hash.toUBase64
+import r3.io.DEFAULT_COPY_BUFFER_SIZE
 import r3.io.Writable
 import r3.source.Source
 import r3.util.srnd
@@ -79,7 +80,7 @@ fun compareByteArrays(a: ByteArray, b: ByteArray): Int {
 }
 
 fun Source.hash256(): ByteArray {
-	return this.createInputStream().buffered().use {
+	return this.createInputStream().buffered(DEFAULT_COPY_BUFFER_SIZE).use {
 		it.hash256()
 	}
 }
