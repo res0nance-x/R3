@@ -2,7 +2,7 @@ package r3.net.discover
 
 import r3.io.log
 import r3.io.serialize
-import r3.net.createMulticastSocket
+import r3.net.hasIP4
 import r3.net.usableNetworkInterfaceList
 import java.io.Closeable
 import java.net.DatagramPacket
@@ -18,14 +18,39 @@ class MulticastDiscoverServer(info: PeerAddressInfo) : Closeable {
 	private val data = info.serialize()
 	val ip6FixedMulticastAddress =
 		InetSocketAddress(InetAddress.getByName("ff32:8395:4ab6:e403:8f2a:b92f:beaa:80da"), 45228)
+	val ip4FixedMulticastAddress =
+		InetSocketAddress(InetAddress.getByName("239.255.45.228"), 45228)
 
 	fun start(daemon: Boolean = true): List<Thread> {
-		val threads = mutableListOf<Thread>()
+		val startedThreads = mutableListOf<Thread>()
 		for (inf in usableNetworkInterfaceList()) {
 			try {
 				if (inf.supportsMulticast() && !inf.isLoopback && inf.isUp && !inf.isVirtual) {
 					try {
-						val sock = createMulticastSocket(ip6FixedMulticastAddress, inf)
+						val sock = MulticastSocket(ip4FixedMulticastAddress.port).apply {
+							reuseAddress = true
+						}
+						var joinedAny = false
+						if (inf.hasIP4()) {
+							try {
+								sock.joinGroup(ip4FixedMulticastAddress, inf)
+								joinedAny = true
+							} catch (e: Exception) {
+								log("MulticastDiscoverServer: Failed to join IPv4 multicast on $inf: ${e.message}")
+							}
+						}
+						try {
+							sock.joinGroup(ip6FixedMulticastAddress, inf)
+							joinedAny = true
+						} catch (_: Exception) {
+							// IPv6 may not be enabled or supported on this interface
+						}
+
+						if (!joinedAny) {
+							sock.close()
+							continue
+						}
+
 						listenSockets.add(sock)
 						val thread = thread(isDaemon = daemon, name = "MulticastDiscoverServer-$inf") {
 							val buffer = ByteArray(1500)
@@ -45,7 +70,7 @@ class MulticastDiscoverServer(info: PeerAddressInfo) : Closeable {
 								}
 							}
 						}
-						threads.add(thread)
+						startedThreads.add(thread)
 					} catch (e: Exception) {
 						log("Failed to create multicast socket on $inf: ${e.message}")
 					}
@@ -54,7 +79,8 @@ class MulticastDiscoverServer(info: PeerAddressInfo) : Closeable {
 				log("Error creating multicast socket on $inf")
 			}
 		}
-		return threads
+		threads.addAll(startedThreads)
+		return startedThreads
 	}
 
 	override fun close() {

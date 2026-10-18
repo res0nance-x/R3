@@ -174,10 +174,12 @@ fun NetworkInterface.createIP6DatagramSocket(port: Int = 0): DatagramSocket {
 
 fun NetworkInterface.createIP4DatagramSocket(port: Int = 0): DatagramSocket {
 	return if (hasIP4()) {
-		// Only SiteLocal makes sense for IP4
-		val addr = getIPAddresses().filter { it.addr.isIP4SiteLocal() && !it.addr.isAnyLocalAddress }
-			.shuffled().first()
-		val sock = DatagramSocket(InetSocketAddress(addr.addr, port)).apply {
+		var addr = getIPAddresses().filter { it.addr.isIP4SiteLocal() && !it.addr.isAnyLocalAddress }
+		if (addr.isEmpty()) {
+			addr = getIPAddresses().filter { it.addr.isIP4() && !it.addr.isAnyLocalAddress && !it.addr.isLoopbackAddress }
+		}
+		val chosen = addr.shuffled().firstOrNull() ?: throw Exception("No suitable IPv4 address found on $name")
+		val sock = DatagramSocket(InetSocketAddress(chosen.addr, port)).apply {
 			broadcast = true; reuseAddress = true
 		}
 		sock
