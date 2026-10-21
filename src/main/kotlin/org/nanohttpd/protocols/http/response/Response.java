@@ -309,6 +309,11 @@ public class Response implements Closeable {
 				if (this.data != null) {
 					this.data.close();
 				}
+				if (e instanceof IOException) {
+					throw (IOException) e;
+				} else {
+					throw new IOException(e);
+				}
 			}
 			if (!sendEverything) {
 				pending -= read;

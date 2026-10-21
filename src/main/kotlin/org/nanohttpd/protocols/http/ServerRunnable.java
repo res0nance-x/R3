@@ -62,6 +62,8 @@ public class ServerRunnable implements Runnable {
 		do {
 			try {
 				final Socket finalAccept = httpd.getMyServerSocket().accept();
+				finalAccept.setSendBufferSize(1024 * 1024);
+				finalAccept.setTcpNoDelay(true);
 				if (this.timeout > 0) {
 					finalAccept.setSoTimeout(this.timeout);
 				}

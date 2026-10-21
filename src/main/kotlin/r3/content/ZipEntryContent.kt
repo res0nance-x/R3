@@ -11,7 +11,9 @@ class ZipEntryContent(val zipFile: ZipFile, val entry: ZipEntry) : Content {
 	override val ext: String = getExtension(entry.name)
 	override val length: Long = entry.size
 	override val lastModified: Long =
-		entry.lastModifiedTime?.toMillis()?.takeIf { it > 0 } ?: System.currentTimeMillis()
+		entry.lastModifiedTime?.toMillis()?.takeIf { it > 0 }
+			?: entry.time.takeIf { it > 0 }
+			?: 0L
 
 	override fun createInputStream(): InputStream {
 		return zipFile.getInputStream(entry)

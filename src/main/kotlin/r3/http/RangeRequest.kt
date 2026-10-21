@@ -102,15 +102,27 @@ fun rangeRequestResponse(session: IHTTPSession, content: Content): Response {
         x.trim().trim('"')
     }
 
+    // If-Match validation (RFC 7232 §3.1)
+    val ifMatch = requestHeader["if-match"]
+    if (isGetOrHead && ifMatch != null) {
+        val matches = ifMatch.trim() == "*" ||
+            ifMatch.split(",").map { stripETag(it) }.contains(eTag)
+        if (!matches) {
+            return newFixedLengthResponse(Status.PRECONDITION_FAILED, MIME_PLAINTEXT, "").apply {
+                addHeader("ETag", '"' + eTag + '"')
+            }
+        }
+    }
+
     // Determine If-Range match: it can be an ETag (possibly quoted or weak) or an HTTP-date
     val headerIfRangeMissingOrMatching: Boolean = if (ifRange == null) {
         true
     } else {
         val fr = ifRange.trim()
-        if (fr.startsWith("\"") || fr.startsWith("W/")) {
-            stripETag(fr) == eTag
+        if (stripETag(fr) == eTag) {
+            true
         } else {
-            // try parse as RFC1123 date and compare to content.created
+            // try parse as RFC1123 date and compare to content.lastModified
             try {
                 val dt = ZonedDateTime.parse(fr, DateTimeFormatter.RFC_1123_DATE_TIME)
                 val tms = dt.toInstant().toEpochMilli()
@@ -283,7 +295,8 @@ fun rangeRequestResponse(session: IHTTPSession, content: Content): Response {
         } catch (e: Exception) {
             filename
         }
-        response.addHeader("Content-Disposition", "inline; filename=\"$encodedFilename\"; filename*=UTF-8''$encodedFilename")
+        val dispositionType = if (content.ext in setOf("html", "htm", "css", "js", "json", "svg", "png", "jpg", "jpeg", "gif", "webp", "ico")) "inline" else "attachment"
+        response.addHeader("Content-Disposition", "$dispositionType; filename=\"$encodedFilename\"; filename*=UTF-8''$encodedFilename")
     }
     return response
 }

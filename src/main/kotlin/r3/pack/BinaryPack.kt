@@ -37,7 +37,7 @@ open class BinaryPack(val src: Source) : Pack, Writable {
 						contentList.add(object : Content {
 							override val path: String = header.name
 							override val ext: String = header.type
-							override val lastModified: Long = Instant.now().toEpochMilli()
+							override val lastModified: Long = if (header.created > 0) header.created else 0L
 							override val length: Long = header.length
 							override fun createInputStream(): InputStream {
 								val itemStream = src.createInputStream()
