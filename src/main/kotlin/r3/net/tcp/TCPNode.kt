@@ -19,8 +19,8 @@ class TCPNode(
 	streamTimeoutMs: Long = 30000 // 30 seconds
 ) : Closeable {
 	private val outDeque = LinkedBlockingDeque<TCPBlock>(100)
-	private val dis = DataInputStream(socket.getInputStream())
-	private val dos = DataOutputStream(socket.getOutputStream())
+	private val dis = DataInputStream(BufferedInputStream(socket.getInputStream(), 64 * 1024))
+	private val dos = DataOutputStream(BufferedOutputStream(socket.getOutputStream(), 64 * 1024))
 	val remoteAddress = socket.remoteSocketAddress as InetSocketAddress
 	private val blockHandler = TCPBlockHandler(
 		tempDir,
@@ -74,6 +74,19 @@ class TCPNode(
 	var onClose: (() -> Unit)? = null
 
 	init {
+		try {
+			socket.tcpNoDelay = true
+			socket.keepAlive = true
+			socket.sendBufferSize = 1024 * 1024
+			socket.receiveBufferSize = 1024 * 1024
+		} catch (e: Exception) {
+			log("TCPNode: Failed to set socket options: $e")
+		}
+		try {
+			socket.trafficClass = 0x10 // IPTOS_LOWDELAY
+		} catch (_: Exception) {
+		}
+
 		blockHandler.onStreamCountChanged = { notifyTransferState() }
 
 		pthread {
@@ -97,6 +110,7 @@ class TCPNode(
 					val block = outDeque.take()
 					// ID can not be -1 normally, so use it as a signal to close
 					if (block.id == -1L) {
+						dos.flush()
 						break
 					}
 					block.write(dos)
@@ -161,7 +175,7 @@ class TCPNode(
 			val id = srnd.nextLong() and 0x7fffffffffffffff
 			val block = TCPBlock(id, header, false)
 			send(block)
-			val arr = ByteArray(16384)
+			val arr = ByteArray(TCPBlock.MAXBLOCKSIZE)
 			var read: Int
 			var last = false
 			while (!last) {

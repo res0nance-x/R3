@@ -24,7 +24,14 @@ class TCPServer(
 	val maxStreamSize: Long = 1024 * 1024 * 1024,
 	val streamTimeoutMs: Long = 30000
 ) : Closeable {
-	val socketServer = ServerSocket(address.port, 10, address.address)
+	val socketServer = ServerSocket().apply {
+		reuseAddress = true
+		try {
+			receiveBufferSize = 1024 * 1024
+		} catch (_: Exception) {
+		}
+		bind(address, 50)
+	}
 	val peerAddressInfo: PeerAddressInfo = if (address.address.isAnyLocalAddress) {
 		val addressList = getAddressListInternal()
 		PeerAddressInfo(serverKey, addressList, socketServer.localPort)
