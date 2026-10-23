@@ -146,17 +146,27 @@ object HandlerFactory {
 				val file = resolveFile(dir, subPath)
 				if (file.isDirectory) {
 					val json = JSONArray()
-					file.listFiles()?.forEach { file ->
+					if (file.normalize().absolutePath != dir.normalize().absolutePath) {
+						val parentJSON = JSONObject()
+						parentJSON.put("name", "../")
+						json.put(parentJSON)
+					}
+					val files = file.listFiles()?.sortedWith(
+						compareBy<File> { !it.isDirectory }.thenBy { it.name.lowercase() }
+					) ?: emptyList()
+					files.forEach { f ->
 						val fileJSON = JSONObject()
-						val isDir = file.isDirectory
-						fileJSON.put("name", if (isDir) file.name + "/" else file.name)
+						val isDir = f.isDirectory
+						fileJSON.put("name", if (isDir) f.name + "/" else f.name)
 						json.put(fileJSON)
 					}
 					BinaryContent(
 						dirHTMLTemplate(json).toByteArray(), "html", "html"
 					)
-				} else {
+				} else if (file.isFile) {
 					FileContent(file)
+				} else {
+					null
 				}
 			} else {
 				null

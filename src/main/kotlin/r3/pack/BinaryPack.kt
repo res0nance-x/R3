@@ -91,5 +91,11 @@ open class BinaryPack(val src: Source) : Pack, Writable {
 				}
 			}
 		}
+		fun append(
+			content: Iterable<Content>, sink: Sink,
+			progress: (Int) -> Unit = { _ -> }
+		) {
+			create(content, sink, progress)
+		}
 	}
 }
