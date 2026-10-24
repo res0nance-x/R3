@@ -7,22 +7,58 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
 import java.math.BigInteger
+import java.util.concurrent.ConcurrentHashMap
 
 internal class TCPBlockHandler(
 	private val tmpDir: File,
 	private val maxConcurrentStreams: Int = 10,
 	private val maxStreamSize: Long = 1024 * 1024 * 1024, // 1 GB
-	private val streamTimeoutMs: Long = 30000, // 30 seconds
+	private val streamTimeoutMs: Long = 300000, // 5 minutes
 	val contentHandler: (TCPNode, ByteArray, File?) -> Unit
 ) : Closeable {
 	class FileStream(val file: File, private val out: OutputStream) : Closeable {
 		constructor(file: File) : this(file, FileOutputStream(file).buffered(r3.io.DEFAULT_COPY_BUFFER_SIZE))
 
+		private val queue = java.util.concurrent.LinkedBlockingQueue<ByteArray>(256)
+		@Volatile private var closed = false
+		@Volatile private var writeError: Throwable? = null
+		private val writerThread = kotlin.concurrent.thread(isDaemon = true, name = "FileStreamWriter") {
+			try {
+				while (!closed || queue.isNotEmpty()) {
+					val chunk = queue.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS) ?: continue
+					if (chunk.isEmpty()) break
+					out.write(chunk)
+				}
+			} catch (e: Throwable) {
+				writeError = e
+			} finally {
+				try { out.close() } catch (_: Exception) {}
+			}
+		}
+
+		fun write(data: ByteArray) {
+			writeError?.let { throw it }
+			if (!queue.offer(data, 30, java.util.concurrent.TimeUnit.SECONDS)) {
+				throw java.io.IOException("FileStream write queue full (storage stalled)")
+			}
+		}
+
 		override fun close() {
-			out.close()
+			closed = true
+			queue.offer(ByteArray(0))
+			try {
+				writerThread.join()
+			} catch (_: Exception) {}
+			writeError?.let { throw it }
 		}
 
 		fun delete() {
+			closed = true
+			queue.clear()
+			queue.offer(ByteArray(0))
+			try {
+				writerThread.join(1000)
+			} catch (_: Exception) {}
 			try {
 				out.close()
 			} catch (_: Exception) {
@@ -57,26 +93,27 @@ internal class TCPBlockHandler(
 				log("TCPBlockHandler: exception deleting temp file $file: $e")
 			}
 		}
-
-		fun write(data: ByteArray) {
-			out.write(data)
-		}
 	}
 
 	private class StreamData(
 		val header: ByteArray,
 		val fileStream: FileStream,
 		var lastWrite: Long,
-		var bytesWritten: Long = 0L
+		var bytesWritten: Long = 0L,
+		var lastProgressReport: Long = 0L
 	)
 
 	private val map = HashMap<Long, StreamData>()
+	private val deadStreams = ConcurrentHashMap.newKeySet<Long>()
 
 	val activeStreamsCount: Int
 		get() = synchronized(map) { map.size }
 
 	@Volatile
 	var onStreamCountChanged: ((Int) -> Unit)? = null
+
+	@Volatile
+	var onStreamProgress: ((streamId: Long, header: ByteArray, bytesWritten: Long) -> Unit)? = null
 
 	private fun notifyStreamCountChanged() {
 		val count = activeStreamsCount
@@ -112,6 +149,10 @@ internal class TCPBlockHandler(
 				val sd = map.remove(id)
 				if (sd != null) {
 					prunedAny = true
+					if (deadStreams.size > 200) {
+						deadStreams.clear()
+					}
+					deadStreams.add(id)
 					log("TCPBlockHandler: pruning stale stream $id")
 					try {
 						sd.fileStream.delete()
@@ -128,6 +169,13 @@ internal class TCPBlockHandler(
 	fun handle(node: TCPNode, block: TCPBlock) {
 		try {
 			pruneStaleStreams()
+			if (deadStreams.contains(block.id)) {
+				if (block.last) {
+					deadStreams.remove(block.id)
+				}
+				return
+			}
+
 			val streamData = synchronized(map) {
 				map[block.id]
 			}
@@ -149,13 +197,21 @@ internal class TCPBlockHandler(
 			} else {
 				// if here then we must have already received the header and so are now writing the stream
 				streamData.fileStream.write(block.data)
-				streamData.lastWrite = System.currentTimeMillis()
+				val now = System.currentTimeMillis()
+				streamData.lastWrite = now
 				streamData.bytesWritten += block.data.size
 				if (streamData.bytesWritten > maxStreamSize) {
+					deadStreams.add(block.id)
 					val err = java.io.IOException("Stream size limit exceeded ($maxStreamSize bytes)")
 					log("TCPBlockHandler: $err")
 					node.close()
 					throw err
+				}
+				if (now - streamData.lastProgressReport >= 250 || block.last) {
+					streamData.lastProgressReport = now
+					try {
+						onStreamProgress?.invoke(block.id, streamData.header, streamData.bytesWritten)
+					} catch (_: Exception) {}
 				}
 				if (block.last) { // if last block then done writing stream
 					synchronized(map) {

@@ -22,14 +22,10 @@ class TCPServer(
 	val serverKey: ServerKey = ServerKey(Key256.randomKey()),
 	val maxConcurrentStreams: Int = 10,
 	val maxStreamSize: Long = 1024 * 1024 * 1024,
-	val streamTimeoutMs: Long = 30000
+	val streamTimeoutMs: Long = 300000
 ) : Closeable {
 	val socketServer = ServerSocket().apply {
 		reuseAddress = true
-		try {
-			receiveBufferSize = 1024 * 1024
-		} catch (_: Exception) {
-		}
 		bind(address, 50)
 	}
 	val peerAddressInfo: PeerAddressInfo = if (address.address.isAnyLocalAddress) {

@@ -16,11 +16,11 @@ class TCPNode(
 	contentHandler: (TCPNode, ByteArray, File?) -> Unit,
 	maxConcurrentStreams: Int = 10,
 	maxStreamSize: Long = 1024 * 1024 * 1024, // 1 GB
-	streamTimeoutMs: Long = 30000 // 30 seconds
+	streamTimeoutMs: Long = 300000 // 5 minutes
 ) : Closeable {
 	private val outDeque = LinkedBlockingDeque<TCPBlock>(100)
-	private val dis = DataInputStream(BufferedInputStream(socket.getInputStream(), 64 * 1024))
-	private val dos = DataOutputStream(BufferedOutputStream(socket.getOutputStream(), 64 * 1024))
+	private val dis = DataInputStream(BufferedInputStream(socket.getInputStream(), DEFAULT_COPY_BUFFER_SIZE))
+	private val dos = DataOutputStream(BufferedOutputStream(socket.getOutputStream(), DEFAULT_COPY_BUFFER_SIZE))
 	val remoteAddress = socket.remoteSocketAddress as InetSocketAddress
 	private val blockHandler = TCPBlockHandler(
 		tempDir,
@@ -59,6 +59,9 @@ class TCPNode(
 	@Volatile
 	var onTransferStateChanged: ((isTransferring: Boolean) -> Unit)? = null
 
+	@Volatile
+	var onStreamProgress: ((node: TCPNode, streamId: Long, header: ByteArray, bytesWritten: Long) -> Unit)? = null
+
 	private fun notifyTransferState() {
 		val transferring = isTransferring()
 		try {
@@ -77,17 +80,14 @@ class TCPNode(
 		try {
 			socket.tcpNoDelay = true
 			socket.keepAlive = true
-			socket.sendBufferSize = 1024 * 1024
-			socket.receiveBufferSize = 1024 * 1024
 		} catch (e: Exception) {
 			log("TCPNode: Failed to set socket options: $e")
 		}
-		try {
-			socket.trafficClass = 0x10 // IPTOS_LOWDELAY
-		} catch (_: Exception) {
-		}
 
 		blockHandler.onStreamCountChanged = { notifyTransferState() }
+		blockHandler.onStreamProgress = { streamId, header, bytesWritten ->
+			onStreamProgress?.invoke(this, streamId, header, bytesWritten)
+		}
 
 		pthread {
 			try {
@@ -98,7 +98,7 @@ class TCPNode(
 				}
 			} catch (e: Throwable) {
 				if (!e.isNormalSocketClose(socket)) {
-					log("TCPNode: $e for $this")
+					log("TCPNode readThread: $e for $this")
 				}
 			} finally {
 				this.close()
@@ -106,6 +106,8 @@ class TCPNode(
 		}
 		pthread {
 			try {
+				var batchStartTime = System.nanoTime()
+				var batchBytes = 0L
 				while (!Thread.currentThread().isInterrupted) {
 					val block = outDeque.take()
 					// ID can not be -1 normally, so use it as a signal to close
@@ -115,13 +117,27 @@ class TCPNode(
 					}
 					block.write(dos)
 					lastWriteMs = System.currentTimeMillis()
-					if (outDeque.isEmpty()) {
+					batchBytes += block.data.size
+					if (outDeque.isEmpty() || block.last || batchBytes >= 4 * 1024 * 1024) {
 						dos.flush()
+						val elapsedMs = (System.nanoTime() - batchStartTime) / 1_000_000
+						// Adaptive percentage delay: pause for 15% of transmission time of this 4MB batch.
+						// Provides a clean 10-25ms airtime breather for Wi-Fi ACKs and MLO link rebalancing, tracking at ~87% of peak channel speed.
+						if (batchBytes >= 1024 * 1024 && elapsedMs > 5) {
+							val pauseMs = (elapsedMs * 0.15).toLong().coerceIn(5, 50)
+							try {
+								Thread.sleep(pauseMs)
+							} catch (_: InterruptedException) {
+								break
+							}
+						}
+						batchStartTime = System.nanoTime()
+						batchBytes = 0L
 					}
 				}
 			} catch (e: Throwable) {
 				if (!e.isNormalSocketClose(socket)) {
-					log("TCPNode: $e")
+					log("TCPNode writeThread: $e for $this")
 				}
 			} finally {
 				this.close()
@@ -179,6 +195,7 @@ class TCPNode(
 			var read: Int
 			var last = false
 			while (!last) {
+				if (closeRequested || socket.isClosed) break
 				read = istream.readMaxBytes(arr)
 				last = read < arr.size
 				send(TCPBlock(id, arr.copyOf(read), last))
@@ -190,11 +207,21 @@ class TCPNode(
 	}
 
 	fun send(block: TCPBlock) {
-		outDeque.put(block)
+		if (closeRequested || socket.isClosed) return
+		while (!closeRequested && !socket.isClosed) {
+			if (outDeque.offer(block, 200, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+				return
+			}
+		}
 	}
 
 	fun sendPriority(block: TCPBlock) {
-		outDeque.putFirst(block)
+		if (closeRequested || socket.isClosed) return
+		while (!closeRequested && !socket.isClosed) {
+			if (outDeque.offerFirst(block, 200, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+				return
+			}
+		}
 	}
 
 	fun forceClose() {
@@ -207,19 +234,9 @@ class TCPNode(
 		val cb = onClose
 		onClose = null
 		try { cb?.invoke() } catch (_: Exception) { }
-		// Signal the write thread to close after all queued blocks are sent
-		var succeeded = outDeque.offer(TCPBlock(-1, ByteArray(0), true))
-		var totalTime = 0
-		while (totalTime < 1000 && !outDeque.isEmpty()) {
-			if (!succeeded) {
-				succeeded = outDeque.offer(TCPBlock(-1, ByteArray(0), true))
-			}
-			Thread.sleep(10)
-			totalTime += 10
-		}
-		if (!outDeque.isEmpty()) {
-			forceClose()
-		}
+		outDeque.clear()
+		outDeque.offer(TCPBlock(-1, ByteArray(0), true))
+		forceClose()
 	}
 
 	fun isClosed(): Boolean {
