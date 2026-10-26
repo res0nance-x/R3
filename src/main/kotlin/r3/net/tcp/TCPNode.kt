@@ -16,7 +16,8 @@ class TCPNode(
 	contentHandler: (TCPNode, ByteArray, File?) -> Unit,
 	maxConcurrentStreams: Int = 10,
 	maxStreamSize: Long = 1024 * 1024 * 1024, // 1 GB
-	streamTimeoutMs: Long = 300000 // 5 minutes
+	streamTimeoutMs: Long = 300000, // 5 minutes
+	fileStreamFactory: ((TCPNode, ByteArray) -> TCPFileStream)? = null
 ) : Closeable {
 	private val outDeque = LinkedBlockingDeque<TCPBlock>(100)
 	private val dis = DataInputStream(BufferedInputStream(socket.getInputStream(), DEFAULT_COPY_BUFFER_SIZE))
@@ -27,7 +28,8 @@ class TCPNode(
 		maxConcurrentStreams,
 		maxStreamSize,
 		streamTimeoutMs,
-		contentHandler
+		contentHandler,
+		fileStreamFactory
 	)
 
 	@Volatile

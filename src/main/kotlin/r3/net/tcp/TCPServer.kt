@@ -22,7 +22,8 @@ class TCPServer(
 	val serverKey: ServerKey = ServerKey(Key256.randomKey()),
 	val maxConcurrentStreams: Int = 10,
 	val maxStreamSize: Long = 1024 * 1024 * 1024,
-	val streamTimeoutMs: Long = 300000
+	val streamTimeoutMs: Long = 300000,
+	val fileStreamFactory: ((TCPNode, ByteArray) -> TCPFileStream)? = null
 ) : Closeable {
 	val socketServer = ServerSocket().apply {
 		reuseAddress = true
@@ -57,7 +58,8 @@ class TCPServer(
 			contentHandler,
 			maxConcurrentStreams,
 			maxStreamSize,
-			streamTimeoutMs
+			streamTimeoutMs,
+			fileStreamFactory
 		)
 		nodeList.add(node)
 		onAccept?.invoke(node)

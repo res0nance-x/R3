@@ -9,91 +9,16 @@ import java.io.OutputStream
 import java.math.BigInteger
 import java.util.concurrent.ConcurrentHashMap
 
+typealias FileStream = TCPFileStream
+
 internal class TCPBlockHandler(
 	private val tmpDir: File,
 	private val maxConcurrentStreams: Int = 10,
 	private val maxStreamSize: Long = 1024 * 1024 * 1024, // 1 GB
 	private val streamTimeoutMs: Long = 300000, // 5 minutes
-	val contentHandler: (TCPNode, ByteArray, File?) -> Unit
+	val contentHandler: (TCPNode, ByteArray, File?) -> Unit,
+	val fileStreamFactory: ((TCPNode, ByteArray) -> TCPFileStream)? = null
 ) : Closeable {
-	class FileStream(val file: File, private val out: OutputStream) : Closeable {
-		constructor(file: File) : this(file, FileOutputStream(file).buffered(r3.io.DEFAULT_COPY_BUFFER_SIZE))
-
-		private val queue = java.util.concurrent.LinkedBlockingQueue<ByteArray>(256)
-		@Volatile private var closed = false
-		@Volatile private var writeError: Throwable? = null
-		private val writerThread = kotlin.concurrent.thread(isDaemon = true, name = "FileStreamWriter") {
-			try {
-				while (!closed || queue.isNotEmpty()) {
-					val chunk = queue.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS) ?: continue
-					if (chunk.isEmpty()) break
-					out.write(chunk)
-				}
-			} catch (e: Throwable) {
-				writeError = e
-			} finally {
-				try { out.close() } catch (_: Exception) {}
-			}
-		}
-
-		fun write(data: ByteArray) {
-			writeError?.let { throw it }
-			if (!queue.offer(data, 30, java.util.concurrent.TimeUnit.SECONDS)) {
-				throw java.io.IOException("FileStream write queue full (storage stalled)")
-			}
-		}
-
-		override fun close() {
-			closed = true
-			queue.offer(ByteArray(0))
-			try {
-				writerThread.join()
-			} catch (_: Exception) {}
-			writeError?.let { throw it }
-		}
-
-		fun delete() {
-			closed = true
-			queue.clear()
-			queue.offer(ByteArray(0))
-			try {
-				writerThread.join(1000)
-			} catch (_: Exception) {}
-			try {
-				out.close()
-			} catch (_: Exception) {
-			}
-			// Attempt to delete the file; on Windows this may fail if another handle is open.
-			try {
-				if (file.exists()) {
-					// Try multiple times with short backoff to handle transient locks (antivirus, indexing, etc.)
-					var deleted = false
-					repeat(5) {
-						if (!file.exists()) {
-							deleted = true; return@repeat
-						}
-						if (file.delete()) {
-							deleted = true; return@repeat
-						}
-						try {
-							Thread.sleep(50)
-						} catch (_: Exception) {
-						}
-					}
-					if (!deleted) {
-						// Schedule eventual cleanup via deleteOnExit as a last resort and log
-						try {
-							file.deleteOnExit()
-						} catch (_: Exception) {
-						}
-						log("TCPBlockHandler: unable to delete temp file after retries: $file")
-					}
-				}
-			} catch (e: Exception) {
-				log("TCPBlockHandler: exception deleting temp file $file: $e")
-			}
-		}
-	}
 
 	private class StreamData(
 		val header: ByteArray,
@@ -155,7 +80,11 @@ internal class TCPBlockHandler(
 					deadStreams.add(id)
 					log("TCPBlockHandler: pruning stale stream $id")
 					try {
-						sd.fileStream.delete()
+						if (sd.fileStream.deleteOnClose) {
+							sd.fileStream.delete()
+						} else {
+							sd.fileStream.close()
+						}
 					} catch (_: Exception) {
 					}
 				}
@@ -187,9 +116,12 @@ internal class TCPBlockHandler(
 						if (map.size >= maxConcurrentStreams) {
 							throw java.io.IOException("Too many concurrent streams (max $maxConcurrentStreams)")
 						}
+						val fs = fileStreamFactory?.invoke(node, block.data) ?: FileStream(createTempFile())
+						val initialBytes = if (fs.file.exists()) fs.file.length() else 0L
 						map[block.id] = StreamData(
-							block.data, FileStream(createTempFile()),
-							System.currentTimeMillis()
+							block.data, fs,
+							System.currentTimeMillis(),
+							bytesWritten = initialBytes
 						)
 					}
 					notifyStreamCountChanged()
@@ -226,17 +158,23 @@ internal class TCPBlockHandler(
 						} catch (_: Exception) {
 						}
 						contentHandler(node, streamData.header, streamData.fileStream.file)
-						streamData.fileStream.delete()
+						if (streamData.fileStream.deleteOnClose) {
+							streamData.fileStream.delete()
+						}
 					} catch (e: Exception) {
 						log("TCPBlockHandler: error delivering final file to handler: $e")
 						try {
-							streamData.fileStream.delete()
+							if (streamData.fileStream.deleteOnClose) {
+								streamData.fileStream.delete()
+							}
 						} catch (_: Exception) {
 						}
 					} finally {
 						// If sending to handler fails, ensure file stream is closed and the temp file is deleted
 						try {
-							streamData.fileStream.delete()
+							if (streamData.fileStream.deleteOnClose) {
+								streamData.fileStream.delete()
+							}
 						} catch (_: Exception) {
 						}
 					}
@@ -256,7 +194,9 @@ internal class TCPBlockHandler(
 					} catch (_: Exception) {
 					}
 					try {
-						sd.fileStream.file.delete()
+						if (sd.fileStream.deleteOnClose) {
+							sd.fileStream.file.delete()
+						}
 					} catch (_: Exception) {
 					}
 				}
@@ -270,7 +210,11 @@ internal class TCPBlockHandler(
 		synchronized(map) {
 			for ((_, sd) in map) {
 				try {
-					sd.fileStream.delete()
+					if (sd.fileStream.deleteOnClose) {
+						sd.fileStream.delete()
+					} else {
+						sd.fileStream.close()
+					}
 				} catch (_: Exception) {
 				}
 			}

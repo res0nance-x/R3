@@ -8,6 +8,9 @@ import java.io.InputStream
 class EncryptedContinuousInputStream(val seq: EncryptedSequence, val istream: InputStream) : InputStream() {
 	private var pos = 0L
 	override fun read(b: ByteArray, off: Int, len: Int): Int {
+		if (len == 0) {
+			return 0
+		}
 		val n = istream.readFixedBytes(b, off, len)
 		if (n <= 0) {
 			return -1
