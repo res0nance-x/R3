@@ -7,6 +7,8 @@ interface Content : Source {
 	val path: String
 	val ext: String
 	val lastModified: Long // epoch milliseconds
+	val mimeType: String?
+		get() = null
 }
 
 val Content.meta: ContentMeta
@@ -15,5 +17,5 @@ val Content.meta: ContentMeta
 	}
 
 fun Content.getMimeType(): String {
-	return MimeMap.getMimeTypeExt(ext)
+	return mimeType ?: MimeMap.getMimeTypeExt(ext)
 }

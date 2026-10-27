@@ -7,6 +7,7 @@ import org.nanohttpd.protocols.http.response.Response
 import org.nanohttpd.protocols.http.response.Response.newFixedLengthResponse
 import org.nanohttpd.protocols.http.response.Status
 import r3.content.Content
+import r3.content.getMimeType
 import r3.io.DEFAULT_COPY_BUFFER_SIZE
 import r3.io.BoundedInputStream
 import r3.io.log
@@ -140,7 +141,7 @@ fun rangeRequestResponse(session: IHTTPSession, content: Content): Response {
         ifNoneMatch.trim() == "*" ||
             ifNoneMatch.split(",").map { stripETag(it) }.contains(eTag)
     )
-    val mimeType = MimeMap[content.ext] ?: "application/octet-stream"
+    val mimeType = content.getMimeType()
 
     // helper to format Last-Modified header from content.created
     val lastModifiedHeader: String = try {
