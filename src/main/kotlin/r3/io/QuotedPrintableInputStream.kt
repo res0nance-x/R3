@@ -95,6 +95,19 @@ class QuotedPrintableInputStream(private val istream: InputStream) : InputStream
 		return bytesRead
 	}
 
+	override fun skip(n: Long): Long {
+		if (n <= 0) return 0L
+		var remaining = n
+		val buf = ByteArray(minOf(remaining, 8192L).toInt())
+		while (remaining > 0) {
+			val toRead = minOf(remaining, buf.size.toLong()).toInt()
+			val read = read(buf, 0, toRead)
+			if (read <= 0) break
+			remaining -= read
+		}
+		return n - remaining
+	}
+
 	override fun available(): Int {
 		return pushbackCount + istream.available()
 	}

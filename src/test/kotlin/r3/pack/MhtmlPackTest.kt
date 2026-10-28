@@ -160,4 +160,32 @@ $pngBase64
 		assertNotNull(logoContent)
 		assertArrayEquals(samplePngBytes(), logoContent!!.createInputStream().readAllBytes())
 	}
+
+	@Test
+	fun testMhtmlStreamSkipping() {
+		val mhtmlStr = createSampleMhtml()
+		val pack = MhtmlPack(BinarySource(mhtmlStr.toByteArray(Charsets.UTF_8)), rewriteLinks = false)
+
+		// 1. Base64 stream skipping (PNG image)
+		val logo = pack["media/logo.png"]!!
+		val fullPng = samplePngBytes()
+		assertEquals(fullPng.size.toLong(), logo.length)
+
+		logo.createInputStream().use { stream ->
+			val skipped = stream.skip(16)
+			assertEquals(16L, skipped)
+			val remaining = stream.readAllBytes()
+			assertArrayEquals(fullPng.copyOfRange(16, fullPng.size), remaining)
+		}
+
+		// 2. Quoted-Printable stream skipping (CSS)
+		val css = pack["static/style.css"]!!
+		val fullCss = "body { color: #333333; font-family: sans-serif; }\r\n"
+		css.createInputStream().use { stream ->
+			val skipped = stream.skip(7)
+			assertEquals(7L, skipped)
+			val remaining = stream.readAllBytes().toString(Charsets.UTF_8)
+			assertEquals(fullCss.substring(7).trim(), remaining.trim())
+		}
+	}
 }

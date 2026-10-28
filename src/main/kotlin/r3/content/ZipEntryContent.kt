@@ -6,9 +6,12 @@ import java.io.InputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 
-class ZipEntryContent(val zipFile: ZipFile, val entry: ZipEntry) : Content {
-	override val path: String = entry.name
-	override val ext: String = getExtension(entry.name)
+class ZipEntryContent(
+	val zipFile: ZipFile,
+	val entry: ZipEntry,
+	override val path: String = entry.name.replace('\\', '/').removePrefix("/")
+) : Content {
+	override val ext: String = getExtension(path)
 	override val length: Long = entry.size
 	override val lastModified: Long =
 		entry.lastModifiedTime?.toMillis()?.takeIf { it > 0 }

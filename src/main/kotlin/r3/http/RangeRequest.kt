@@ -11,6 +11,7 @@ import r3.content.getMimeType
 import r3.io.DEFAULT_COPY_BUFFER_SIZE
 import r3.io.BoundedInputStream
 import r3.io.log
+import r3.io.skipFullBytes
 import java.io.BufferedInputStream
 import java.io.ByteArrayInputStream
 import java.io.EOFException
@@ -65,25 +66,7 @@ fun parseRange(header: Map<String, String>): RangeSpec {
  * Lets any [java.io.IOException] from [InputStream.skip] or [InputStream.read] propagate normally.
  */
 private fun skipFully(stream: InputStream, toSkip: Long) {
-    var remaining = toSkip
-    val buf = ByteArray(8192)
-    while (remaining > 0) {
-        val skipped = stream.skip(remaining)   // IOException propagates to caller
-        if (skipped > 0) {
-            remaining -= skipped
-            continue
-        }
-        // skip() returned 0 — fall back to read-and-discard to guarantee progress
-        val r = stream.read(buf, 0, minOf(remaining, buf.size.toLong()).toInt())
-        when {
-            r == -1 -> throw EOFException(
-                "Unexpected EOF while skipping to range start " +
-                "(${toSkip - remaining} of $toSkip bytes skipped)"
-            )
-            r > 0 -> remaining -= r
-            // r == 0 → no data yet; retry on next iteration
-        }
-    }
+    stream.skipFullBytes(toSkip)
 }
 
 fun rangeRequestResponse(session: IHTTPSession, content: Content): Response {
