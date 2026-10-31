@@ -8,8 +8,8 @@ import org.nanohttpd.protocols.http.response.Response.newFixedLengthResponse
 import org.nanohttpd.protocols.http.response.Status
 import r3.content.Content
 import r3.content.getMimeType
-import r3.io.DEFAULT_COPY_BUFFER_SIZE
 import r3.io.BoundedInputStream
+import r3.io.DEFAULT_COPY_BUFFER_SIZE
 import r3.io.log
 import r3.io.skipFullBytes
 import java.io.BufferedInputStream

@@ -2,11 +2,7 @@ package r3.io
 
 import java.io.Closeable
 import java.io.File
-import java.nio.file.ClosedWatchServiceException
-import java.nio.file.FileSystems
-import java.nio.file.StandardWatchEventKinds
-import java.nio.file.WatchKey
-import java.nio.file.WatchService
+import java.nio.file.*
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 

@@ -32,3 +32,11 @@ kotlin {
 tasks.test {
 	useJUnitPlatform()
 }
+
+tasks.register<JavaExec>("runHub") {
+	group = "application"
+	description = "Runs the FileMessageHub screenshot edge-filter demo."
+	classpath = sourceSets["test"].runtimeClasspath
+	mainClass.set("r3.io.FileMessageHubTest")
+	standardInput = System.`in`
+}

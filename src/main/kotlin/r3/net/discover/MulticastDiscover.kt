@@ -2,12 +2,7 @@ package r3.net.discover
 
 import r3.io.debug
 import r3.io.toDataInputStream
-import r3.net.createIP4DatagramSocket
-import r3.net.createIP6DatagramSocket
-import r3.net.getIP4BroadcastAddress
-import r3.net.hasIP4
-import r3.net.hasIP6
-import r3.net.usableNetworkInterfaceList
+import r3.net.*
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress

@@ -2,13 +2,7 @@ package r3.org.json;
 /*
 Public Domain.
 */
-
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
-
+import java.util.*;
 
 /**
  * Configuration object for the XML parser. The configuration is immutable.

@@ -9,7 +9,6 @@ import r3.source.copyTo
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.InputStream
-import java.time.Instant
 
 open class BinaryPack(val src: Source) : Pack, Writable {
 	protected val contentList = ArrayList<Content>()

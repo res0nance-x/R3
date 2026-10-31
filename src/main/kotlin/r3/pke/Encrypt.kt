@@ -7,7 +7,9 @@ import r3.encryption.EncryptedContinuousOutputStream
 import r3.math.EncryptedSequence
 import r3.source.Sink
 import r3.source.Source
-import java.io.*
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
 
 object Encrypt {
 	fun encrypt(pass: Password256, source: Source, sink: Sink) {
