@@ -12,25 +12,23 @@ import java.util.concurrent.atomic.AtomicInteger
 
 class TCPNode(
 	private val socket: Socket,
-	tempDir: File,
-	contentHandler: (TCPNode, ByteArray, File?) -> Unit,
-	maxConcurrentStreams: Int = 10,
-	maxStreamSize: Long = 1024 * 1024 * 1024, // 1 GB
-	streamTimeoutMs: Long = 300000, // 5 minutes
-	fileStreamFactory: ((TCPNode, ByteArray) -> TCPFileStream)? = null
+	val blockHandler: BlockHandler = SimpleBlockHandler()
 ) : Closeable {
+	constructor(
+		socket: Socket,
+		contentHandler: (TCPNode, ByteArray, ByteArray?) -> Unit
+	) : this(socket, SimpleBlockHandler(contentHandler = contentHandler))
+
+	constructor(
+		socket: Socket,
+		tempDir: File,
+		contentHandler: (TCPNode, ByteArray, File?) -> Unit
+	) : this(socket, TCPBlockHandler(tempDir, contentHandler = contentHandler))
+
 	private val outDeque = LinkedBlockingDeque<TCPBlock>(100)
 	private val dis = DataInputStream(BufferedInputStream(socket.getInputStream(), DEFAULT_COPY_BUFFER_SIZE))
 	private val dos = DataOutputStream(BufferedOutputStream(socket.getOutputStream(), DEFAULT_COPY_BUFFER_SIZE))
 	val remoteAddress = socket.remoteSocketAddress as InetSocketAddress
-	private val blockHandler = TCPBlockHandler(
-		tempDir,
-		maxConcurrentStreams,
-		maxStreamSize,
-		streamTimeoutMs,
-		contentHandler,
-		fileStreamFactory
-	)
 
 	@Volatile
 	private var closeRequested = false
@@ -50,21 +48,18 @@ class TCPNode(
 		get() = activeSendStreams.get()
 
 	val activeReceiveStreams: Int
-		get() = blockHandler.activeStreamsCount
+		get() = blockHandler.activeStreamsCount(this)
 
 	fun isSending(): Boolean = activeSendStreams.get() > 0
 
-	fun isReceiving(): Boolean = blockHandler.activeStreamsCount > 0
+	fun isReceiving(): Boolean = blockHandler.activeStreamsCount(this) > 0
 
 	fun isTransferring(): Boolean = isSending() || isReceiving()
 
 	@Volatile
 	var onTransferStateChanged: ((isTransferring: Boolean) -> Unit)? = null
 
-	@Volatile
-	var onStreamProgress: ((node: TCPNode, streamId: Long, header: ByteArray, bytesWritten: Long) -> Unit)? = null
-
-	private fun notifyTransferState() {
+	internal fun notifyTransferState() {
 		val transferring = isTransferring()
 		try {
 			onTransferStateChanged?.invoke(transferring)
@@ -84,11 +79,6 @@ class TCPNode(
 			socket.keepAlive = true
 		} catch (e: Exception) {
 			log("TCPNode: Failed to set socket options: $e")
-		}
-
-		blockHandler.onStreamCountChanged = { notifyTransferState() }
-		blockHandler.onStreamProgress = { streamId, header, bytesWritten ->
-			onStreamProgress?.invoke(this, streamId, header, bytesWritten)
 		}
 
 		pthread {
@@ -227,7 +217,8 @@ class TCPNode(
 	}
 
 	fun forceClose() {
-		closeAll(dos, dis, socket, blockHandler)
+		blockHandler.onNodeClosed(this)
+		closeAll(dos, dis, socket)
 	}
 
 	override fun close() {

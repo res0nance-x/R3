@@ -6,7 +6,6 @@ import r3.net.discover.PeerAddressInfo
 import r3.net.getAddressListInternal
 import r3.pke.ServerKey
 import java.io.Closeable
-import java.io.File
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -14,16 +13,11 @@ import java.net.Socket
 import kotlin.concurrent.thread
 
 class TCPServer(
+	val blockHandler: BlockHandler,
 	val nodeList: MutableList<TCPNode> = mutableListOf(),
-	val tempDir: File,
-	val contentHandler: (TCPNode, ByteArray, File?) -> Unit,
 	val address: InetSocketAddress = InetSocketAddress(InetAddress.getLoopbackAddress(), 0),
 	val onAccept: ((TCPNode) -> Unit)? = null,
-	val serverKey: ServerKey = ServerKey(Key256.randomKey()),
-	val maxConcurrentStreams: Int = 10,
-	val maxStreamSize: Long = 1024 * 1024 * 1024,
-	val streamTimeoutMs: Long = 300000,
-	val fileStreamFactory: ((TCPNode, ByteArray) -> TCPFileStream)? = null
+	val serverKey: ServerKey = ServerKey(Key256.randomKey())
 ) : Closeable {
 	val socketServer = ServerSocket().apply {
 		reuseAddress = true
@@ -52,15 +46,7 @@ class TCPServer(
 	}
 
 	private fun handle(sock: Socket) {
-		val node = TCPNode(
-			sock,
-			tempDir,
-			contentHandler,
-			maxConcurrentStreams,
-			maxStreamSize,
-			streamTimeoutMs,
-			fileStreamFactory
-		)
+		val node = TCPNode(sock, blockHandler)
 		nodeList.add(node)
 		onAccept?.invoke(node)
 	}
