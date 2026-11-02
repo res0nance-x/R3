@@ -33,13 +33,16 @@ class TCPNode(
 	@Volatile
 	private var closeRequested = false
 
+	/** Timestamp when this TCPNode was created. */
+	val connectedAtMs: Long = System.currentTimeMillis()
+
 	/** Updated on every received block — used by the application-level ping scheduler. */
 	@Volatile
-	var lastActivityMs: Long = System.currentTimeMillis()
+	var lastActivityMs: Long = connectedAtMs
 		private set
 
 	@Volatile
-	var lastWriteMs: Long = System.currentTimeMillis()
+	var lastWriteMs: Long = connectedAtMs
 		private set
 
 	private val activeSendStreams = AtomicInteger(0)
@@ -199,18 +202,28 @@ class TCPNode(
 	}
 
 	fun send(block: TCPBlock) {
-		if (closeRequested || socket.isClosed) return
-		while (!closeRequested && !socket.isClosed) {
+		if (isClosed()) return
+		while (!isClosed()) {
 			if (outDeque.offer(block, 200, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+				return
+			}
+			if (System.currentTimeMillis() - lastWriteMs > 30_000L) {
+				log("TCPNode: Write queue stalled for >30s on $this, closing connection")
+				close()
 				return
 			}
 		}
 	}
 
 	fun sendPriority(block: TCPBlock) {
-		if (closeRequested || socket.isClosed) return
-		while (!closeRequested && !socket.isClosed) {
+		if (isClosed()) return
+		while (!isClosed()) {
 			if (outDeque.offerFirst(block, 200, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+				return
+			}
+			if (System.currentTimeMillis() - lastWriteMs > 30_000L) {
+				log("TCPNode: Priority write queue stalled for >30s on $this, closing connection")
+				close()
 				return
 			}
 		}
@@ -233,7 +246,7 @@ class TCPNode(
 	}
 
 	fun isClosed(): Boolean {
-		return closeRequested || socket.isClosed
+		return closeRequested || socket.isClosed || !socket.isConnected || socket.isInputShutdown || socket.isOutputShutdown
 	}
 
 	override fun toString(): String {
