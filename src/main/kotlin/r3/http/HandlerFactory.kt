@@ -5,6 +5,8 @@ import r3.content.*
 import r3.key.Key128
 import r3.org.json.JSONArray
 import r3.org.json.JSONObject
+import r3.pack.MHTPackMap
+import r3.pack.MhtmlPack
 import r3.pack.Pack
 import r3.pack.PackMap
 import java.io.File
@@ -205,7 +207,11 @@ object HandlerFactory {
 	fun createPackHandler(pack: Pack): ContentHandler {
 		return object : ContentHandler {
 			val contentList = pack.toList().sortedWith { a, b -> a.path.compareTo(b.path) }
-			val packMap = PackMap(contentList)
+			val packMap = when (pack) {
+				is MhtmlPack -> pack.packMap
+				is MHTPackMap -> pack
+				else -> PackMap(contentList)
+			}
 			override fun handle(header: JSONObject, content: Content?): Content? {
 				val path = header.optString("path") ?: error("No Path")
 				val key = path.substring(1)

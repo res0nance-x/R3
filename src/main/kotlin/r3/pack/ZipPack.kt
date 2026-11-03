@@ -77,7 +77,7 @@ class ZipPack : Pack, Closeable, AutoCloseable {
 		val clean = path.removePrefix("/")
 		map[clean]?.let { return it }
 
-		val encoded = PackMap.encodePath(clean)
+		val encoded = encodePath(clean)
 		if (encoded != clean) {
 			map[encoded]?.let { return it }
 		}
@@ -99,5 +99,13 @@ class ZipPack : Pack, Closeable, AutoCloseable {
 			zipFile.close()
 		} catch (_: Exception) {}
 		tempFile?.delete()
+	}
+
+	companion object {
+		private fun encodePath(path: String): String {
+			return path.split('/').joinToString("/") { seg ->
+				java.net.URLEncoder.encode(seg, Charsets.UTF_8.name()).replace("+", "%20")
+			}
+		}
 	}
 }

@@ -30,8 +30,9 @@ class MhtmlPack(val src: Source, val rewriteLinks: Boolean = true) : Pack {
 	constructor(file: File, rewriteLinks: Boolean = true) : this(FileSource(file), rewriteLinks)
 
 	private val contentList = ArrayList<Content>()
-	private val contentMap = HashMap<String, Content>()
-	private val locationMap = HashMap<String, Content>()
+	val locationMap = HashMap<String, Content>()
+
+	val packMap: MHTPackMap by lazy { MHTPackMap(contentList, locationMap) }
 
 	var title: String? = null
 		private set
@@ -51,18 +52,7 @@ class MhtmlPack(val src: Source, val rewriteLinks: Boolean = true) : Pack {
 		return contentList.iterator()
 	}
 
-	operator fun get(path: String): Content? {
-		contentMap[path]?.let { return it }
-		val encoded = PackMap.encodePath(path)
-		if (encoded != path) {
-			contentMap[encoded]?.let { return it }
-		}
-		val decoded = runCatching { URLDecoder.decode(path, Charsets.UTF_8.name()) }.getOrNull()
-		if (decoded != null && decoded != path) {
-			contentMap[decoded]?.let { return it }
-		}
-		return locationMap[path]
-	}
+	operator fun get(path: String): Content? = packMap[path]
 
 	fun getByLocation(location: String): Content? = locationMap[location]
 
@@ -90,7 +80,7 @@ class MhtmlPack(val src: Source, val rewriteLinks: Boolean = true) : Pack {
 		try {
 			// 1. Parse top-level headers
 			val topHeaders = readHeaders(cis)
-			title = topHeaders["subject"]
+			title = decodeMimeWords(topHeaders["subject"])
 			snapshotLocation = topHeaders["snapshot-content-location"]
 			date = topHeaders["date"]
 
@@ -99,7 +89,7 @@ class MhtmlPack(val src: Source, val rewriteLinks: Boolean = true) : Pack {
 			val boundary = extractBoundary(contentTypeHeader)
 				?: throw IOException("No multipart boundary found in MHTML Content-Type: $contentTypeHeader")
 
-			val boundaryBytes = ("--" + boundary).toByteArray(Charsets.US_ASCII)
+			val boundaryBytes = ("--$boundary").toByteArray(Charsets.US_ASCII)
 			val target = ByteArray(1 + boundaryBytes.size)
 			target[0] = '\n'.code.toByte()
 			System.arraycopy(boundaryBytes, 0, target, 1, boundaryBytes.size)
@@ -580,11 +570,6 @@ class MhtmlPack(val src: Source, val rewriteLinks: Boolean = true) : Pack {
 			}
 
 			contentList.add(content)
-			contentMap[path] = content
-			val encPath = PackMap.encodePath(path)
-			if (encPath != path) contentMap.putIfAbsent(encPath, content)
-			val decPath = runCatching { URLDecoder.decode(path, Charsets.UTF_8.name()) }.getOrNull()
-			if (decPath != null && decPath != path) contentMap.putIfAbsent(decPath, content)
 			if (part.contentLocation != null) {
 				locationMap[part.contentLocation] = content
 			}
@@ -737,6 +722,45 @@ class MhtmlPack(val src: Source, val rewriteLinks: Boolean = true) : Pack {
 	}
 
 	companion object {
+		fun decodeMimeWords(input: String?): String? {
+			if (input == null || !input.contains("=?")) return input
+			val regex = Regex("""=\?([^?]+)\?([bBqQ])\?([^?]+)\?=""")
+			return regex.replace(input) { match ->
+				val charsetName = match.groupValues[1]
+				val encoding = match.groupValues[2].uppercase()
+				val text = match.groupValues[3]
+				val cs = runCatching { Charset.forName(charsetName) }.getOrDefault(Charsets.UTF_8)
+				try {
+					if (encoding == "B") {
+						val bytes = Base64.getDecoder().decode(text)
+						String(bytes, cs)
+					} else if (encoding == "Q") {
+						val normalized = text.replace('_', ' ')
+						val baos = java.io.ByteArrayOutputStream()
+						var i = 0
+						while (i < normalized.length) {
+							val c = normalized[i]
+							if (c == '=' && i + 2 < normalized.length) {
+								val hex = normalized.substring(i + 1, i + 3).toIntOrNull(16)
+								if (hex != null) {
+									baos.write(hex)
+									i += 3
+									continue
+								}
+							}
+							baos.write(c.code)
+							i++
+						}
+						String(baos.toByteArray(), cs)
+					} else {
+						match.value
+					}
+				} catch (_: Exception) {
+					match.value
+				}
+			}
+		}
+
 		private fun isHex(c: Int): Boolean {
 			val ch = c.toChar()
 			return ch in '0'..'9' || ch in 'A'..'F' || ch in 'a'..'f'
