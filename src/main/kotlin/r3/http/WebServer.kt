@@ -57,6 +57,7 @@ fun toHeader(request: IHTTPSession): JSONObject {
 	}
 	// core keys override parameters and headers
 	json.put("path", java.net.URLDecoder.decode(request.uri, "UTF-8"))
+	json.put("rawPath", request.uri)
 	json.put("remote-ip", request.remoteInetSocketAddress.let { "${it.address}:${it.port}" })
 	json.put("method", request.method.toString())
 	return json

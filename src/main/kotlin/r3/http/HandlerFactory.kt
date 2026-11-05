@@ -5,6 +5,8 @@ import r3.content.*
 import r3.key.Key128
 import r3.org.json.JSONArray
 import r3.org.json.JSONObject
+import r3.pack.DirPack
+import r3.pack.LoosePackMap
 import r3.pack.MHTPackMap
 import r3.pack.MhtmlPack
 import r3.pack.Pack
@@ -137,16 +139,26 @@ object HandlerFactory {
 	// Like the file handler except will generate directory listings HTML
 	@JvmOverloads
 	@ContentHandlerAnnotation("dir")
-	fun createDirectoryRouter(dir: File, prefix: String = "/"): ContentHandler {
+	fun createDirectoryRouter(dir: File, prefix: String = "/", loose: Boolean = false): ContentHandler {
 		val normPrefix = "/" + prefix.trim('/').let { if (it.isEmpty()) "" else "$it/" }
+		val loosePackMap = if (loose) {
+			LoosePackMap(DirPack(dir).toList())
+		} else null
+
 		return ContentHandler { header: JSONObject, content: Content? ->
 			val path = header.optString("path", null)
+			val rawPath = header.optString("rawPath", null)
 			// Match exact prefix, subpath, or prefix without the trailing slash
 			val matchesPrefix = path.startsWith(normPrefix) || path == normPrefix.removeSuffix("/")
 			if (matchesPrefix) {
 				val subPath = if (path.startsWith(normPrefix)) path.substring(normPrefix.length) else ""
-				val file = resolveFile(dir, subPath)
-				if (file.isDirectory) {
+				val rawSubPath = if (rawPath != null && rawPath.startsWith(normPrefix)) rawPath.substring(normPrefix.length) else null
+				val file = try {
+					resolveFile(dir, subPath)
+				} catch (e: Exception) {
+					null
+				}
+				if (file != null && file.isDirectory) {
 					val json = JSONArray()
 					if (file.normalize().absolutePath != dir.normalize().absolutePath) {
 						val parentJSON = JSONObject()
@@ -165,8 +177,10 @@ object HandlerFactory {
 					BinaryContent(
 						dirHTMLTemplate(json).toByteArray(), "html", "html"
 					)
-				} else if (file.isFile) {
+				} else if (file != null && file.isFile) {
 					FileContent(file)
+				} else if (loosePackMap != null) {
+					loosePackMap.get(subPath, rawSubPath)
 				} else {
 					null
 				}
@@ -204,17 +218,21 @@ object HandlerFactory {
 		}
 	}
 
-	fun createPackHandler(pack: Pack): ContentHandler {
+	@JvmOverloads
+	fun createPackHandler(pack: Pack, loose: Boolean = false): ContentHandler {
 		return object : ContentHandler {
 			val contentList = pack.toList().sortedWith { a, b -> a.path.compareTo(b.path) }
-			val packMap = when (pack) {
-				is MhtmlPack -> pack.packMap
-				is MHTPackMap -> pack
+			val packMap = when {
+				loose -> LoosePackMap(contentList)
+				pack is MhtmlPack -> pack.packMap
+				pack is MHTPackMap -> pack
 				else -> PackMap(contentList)
 			}
 			override fun handle(header: JSONObject, content: Content?): Content? {
 				val path = header.optString("path") ?: error("No Path")
+				val rawPath = header.optString("rawPath", null)
 				val key = path.substring(1)
+				val rawKey = rawPath?.removePrefix("/")
 				return if (key == "pack_list") {
 					val json = JSONArray()
 					for (itemContent in contentList) {
@@ -227,7 +245,11 @@ object HandlerFactory {
 					}
 					BinaryContent(json.toString(2).toByteArray(), "pack_list.json", "json")
 				} else {
-					packMap[key]
+					if (packMap is LoosePackMap) {
+						packMap.get(key, rawKey)
+					} else {
+						packMap[key]
+					}
 				}
 			}
 
