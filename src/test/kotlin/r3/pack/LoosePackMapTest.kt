@@ -116,4 +116,62 @@ class LoosePackMapTest {
 		assertNull(map["images/notfound.jpg"])
 		assertNull(map["photo.png"]) // different extension
 	}
+
+	@Test
+	fun testQueryParametersAndFragments() {
+		val items = listOf(
+			content("css/style.css", "css data"),
+			content("page.html", "html data")
+		)
+		val map = LoosePackMap(items)
+		assertEquals("css data", map["css/style.css?v=2.1.0"]?.createInputStream()?.reader()?.readText())
+		assertEquals("html data", map["page.html#section-heading"]?.createInputStream()?.reader()?.readText())
+		assertEquals("css data", map["/css/style.css?v=1#hash"]?.createInputStream()?.reader()?.readText())
+	}
+
+	@Test
+	fun testWindowsBackslashSeparators() {
+		val items = listOf(
+			content("assets/images/banner.png", "banner data")
+		)
+		val map = LoosePackMap(items)
+		assertEquals("banner data", map["assets\\images\\banner.png"]?.createInputStream()?.reader()?.readText())
+		assertEquals("banner data", map["\\assets\\images\\banner.png"]?.createInputStream()?.reader()?.readText())
+	}
+
+	@Test
+	fun testEquivalentExtensionsHtmAndHtml() {
+		val items = listOf(
+			content("docs/manual.htm", "manual data"),
+			content("gallery/photo.jpeg", "photo data")
+		)
+		val map = LoosePackMap(items)
+		// .htm matches .html request and vice versa
+		assertEquals("manual data", map["docs/manual.html"]?.createInputStream()?.reader()?.readText())
+		assertEquals("photo data", map["gallery/photo.jpg"]?.createInputStream()?.reader()?.readText())
+	}
+
+	@Test
+	fun testIndexFallbackAndBlankPath() {
+		val itemsNested = listOf(
+			content("MyArchive/sub/index.html", "archive home")
+		)
+		val map1 = LoosePackMap(itemsNested)
+		assertEquals("archive home", map1[""]?.createInputStream()?.reader()?.readText())
+		assertEquals("archive home", map1["/"]?.createInputStream()?.reader()?.readText())
+		assertEquals("archive home", map1["index.html"]?.createInputStream()?.reader()?.readText())
+
+		val itemsHtm = listOf(
+			content("default.htm", "htm home")
+		)
+		val map2 = LoosePackMap(itemsHtm)
+		assertEquals("htm home", map2["index.html"]?.createInputStream()?.reader()?.readText())
+
+		val itemsSingleHtml = listOf(
+			content("presentation/article.html", "article content")
+		)
+		val map3 = LoosePackMap(itemsSingleHtml)
+		assertEquals("article content", map3["index.html"]?.createInputStream()?.reader()?.readText())
+		assertEquals("article content", map3[""]?.createInputStream()?.reader()?.readText())
+	}
 }

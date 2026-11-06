@@ -1,296 +1,270 @@
 package r3.pack
 
 import r3.content.Content
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
+import java.text.Normalizer
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.math.abs
+import java.util.regex.Pattern
 
-open class LoosePackMap(private val list: List<Content>) : PackMap(list) {
+private val DIACRITIC_PATTERN = Pattern.compile("\\p{InCombiningDiacriticalMarks}+")
+private val PUNCT_REGEX = Regex("""[()\[\],!$'"]""")
+private val UNDERSCORES_REGEX = Regex("_+")
 
-	private class Entry(
-		val content: Content,
-		val originalPath: String,
-		val cleanPath: String,
-		val segments: List<String>,
-		val filename: String,
-		val cleanPathLower: String,
-		val filenameLower: String,
-		val escapeUnderscoreLower: String,
-		val escapeRemovedLower: String,
-		val filenameEscapeUnderscoreLower: String,
-		val filenameEscapeRemovedLower: String
-	)
+fun normalizeAndSegment(rawPath: String): List<String> {
+   if (rawPath.isBlank()) return emptyList()
+   var p = rawPath.trim()
+   if (p.startsWith("&quot;") && p.endsWith("&quot;")) {
+      p = p.removeSurrounding("&quot;")
+   }
+   p = p.removeSurrounding("\"").removeSurrounding("'")
+   if (p.startsWith("cid:", ignoreCase = true)) {
+      p = p.substring(4).removeSurrounding("<", ">").substringBefore('@')
+   } else if (p.contains("://")) {
+      p = p.substringAfter("://").substringAfter('/', "")
+   } else if (p.startsWith("//")) {
+      p = p.substring(2).substringAfter('/', "")
+   }
+   val clean = p.substringBefore('?').substringBefore('#')
+   if (clean.isBlank() || clean.startsWith("data:") || clean.startsWith("blob:") || clean.startsWith("javascript:")) {
+      return emptyList()
+   }
 
-	private val entries: List<Entry>
-	private val cleanExactMap: Map<String, Content>
-	private val caseInsensitiveMap: Map<String, Content>
-	private val escapeUnderscoreMap: Map<String, Content>
-	private val escapeUnderscoreCollapsedMap: Map<String, Content>
-	private val escapeRemovedMap: Map<String, Content>
-	private val filenameMap: Map<String, MutableList<Entry>>
-	private val filenameEscapeUnderscoreMap: Map<String, MutableList<Entry>>
-	private val filenameEscapeRemovedMap: Map<String, MutableList<Entry>>
+   // 1. URL decoding: protect '+' in path by replacing %20 specifically if needed,
+   // then decode escapes safely.
+   var decoded = clean.replace("+", "%2B")
+   var previous = ""
+   var passes = 0
+   while (decoded != previous && passes < 3) {
+      previous = decoded
+      decoded = try {
+         URLDecoder.decode(decoded, StandardCharsets.UTF_8.name())
+      } catch (_: Exception) {
+         break
+      }
+      passes++
+   }
+   // 2. Unicode normalization (NFKD) + strip diacritics
+   val decomposed = Normalizer.normalize(decoded, Normalizer.Form.NFKD)
+   val strippedUnicode = DIACRITIC_PATTERN.matcher(decomposed).replaceAll("")
+   // 3. Lowercase & normalize spaces/escapes/punctuation to underscore
+   val lowercased = strippedUnicode.lowercase()
+   // 4. Split by '/' and '\', resolve '.' and '..'
+   val rawSegments = lowercased.split('/', '\\').map { it.trim() }.filter { it.isNotEmpty() }
+   val resolved = mutableListOf<String>()
+   for (seg in rawSegments) {
+      if (seg == "..") {
+         if (resolved.isNotEmpty()) resolved.removeAt(resolved.size - 1)
+      } else if (seg != ".") {
+         // Treat spaces, escapes, and punctuation as underscores
+         val normalizedSeg = seg.replace(PUNCT_REGEX, "_")
+            .replace(' ', '_')
+            .replace(UNDERSCORES_REGEX, "_")
+         resolved.add(normalizedSeg)
+      }
+   }
+   return resolved
+}
 
-	private val cache = ConcurrentHashMap<String, Content>()
-	private val negativeCache = ConcurrentHashMap.newKeySet<String>()
+fun isMatchingSegment(segA: String, segB: String): Boolean {
+   if (segA == segB || segA.replace("_", "") == segB.replace("_", "")) return true
+   // Allow equivalent web extensions: .html <-> .htm, .jpeg <-> .jpg
+   val a = segA.replace("_", "")
+   val b = segB.replace("_", "")
+   val baseA = a.substringBeforeLast('.')
+   val baseB = b.substringBeforeLast('.')
+   val extA = a.substringAfterLast('.', "")
+   val extB = b.substringAfterLast('.', "")
+   if (baseA == baseB) {
+      if ((extA == "html" && extB == "htm") || (extA == "htm" && extB == "html")) return true
+      if ((extA == "jpeg" && extB == "jpg") || (extA == "jpg" && extB == "jpeg")) return true
+   }
+   return false
+}
 
-	init {
-		val entryList = ArrayList<Entry>(list.size)
-		val cExact = HashMap<String, Content>()
-		val ciMap = HashMap<String, Content>()
-		val euMap = HashMap<String, Content>()
-		val eucMap = HashMap<String, Content>()
-		val erMap = HashMap<String, Content>()
-		val fnMap = HashMap<String, MutableList<Entry>>()
-		val fnEuMap = HashMap<String, MutableList<Entry>>()
-		val fnErMap = HashMap<String, MutableList<Entry>>()
+fun countMatchingSuffixSegments(a: List<String>, b: List<String>): Int {
+   val minSize = minOf(a.size, b.size)
+   var matches = 0
+   for (i in 1..minSize) {
+      val segA = a[a.size - i]
+      val segB = b[b.size - i]
+      if (isMatchingSegment(segA, segB)) {
+         matches++
+      } else {
+         break
+      }
+   }
+   return matches
+}
 
-		for (content in list) {
-			val orig = content.path
-			val clean = clean(orig)
-			val segs = splitSegments(clean)
-			val fn = segs.lastOrNull() ?: clean
-			val cleanLower = clean.lowercase()
-			val fnLower = fn.lowercase()
-			val euLower = escapeToUnderscore(cleanLower)
-			val eucLower = collapseUnderscores(euLower)
-			val erLower = escapeRemoved(cleanLower)
-			val fnEuLower = escapeToUnderscore(fnLower)
-			val fnErLower = escapeRemoved(fnLower)
+open class LoosePackMap(
+   private val list: List<Content>,
+   val locationMap: Map<String, Content>? = null
+) : PackMap(list) {
+   constructor(iterable: Iterable<Content>) : this(iterable.toList(), null)
+   constructor(iterable: Iterable<Content>, locationMap: Map<String, Content>?) : this(iterable.toList(), locationMap)
 
-			val entry = Entry(
-				content = content,
-				originalPath = orig,
-				cleanPath = clean,
-				segments = segs,
-				filename = fn,
-				cleanPathLower = cleanLower,
-				filenameLower = fnLower,
-				escapeUnderscoreLower = euLower,
-				escapeRemovedLower = erLower,
-				filenameEscapeUnderscoreLower = fnEuLower,
-				filenameEscapeRemovedLower = fnErLower
-			)
-			entryList.add(entry)
+   val nmap: Map<List<String>, Content>
+   private val leafIndex: Map<String, List<Pair<List<String>, Content>>>
+   private val baseNameIndex: Map<String, List<Pair<List<String>, Content>>>
+   private val cache = ConcurrentHashMap<String, Content>()
+   private val negativeCache = ConcurrentHashMap.newKeySet<String>()
 
-			cExact[clean] = content
-			ciMap[cleanLower] = content
-			euMap[euLower] = content
-			eucMap[eucLower] = content
-			erMap[erLower] = content
+   init {
+      val map = HashMap<List<String>, Content>()
+      val leaves = HashMap<String, MutableList<Pair<List<String>, Content>>>()
+      val baseNames = HashMap<String, MutableList<Pair<List<String>, Content>>>()
 
-			fnMap.computeIfAbsent(fnLower) { ArrayList() }.add(entry)
-			fnEuMap.computeIfAbsent(fnEuLower) { ArrayList() }.add(entry)
-			fnErMap.computeIfAbsent(fnErLower) { ArrayList() }.add(entry)
-		}
+      for (content in list) {
+         val segs = normalizeAndSegment(content.path)
+         if (segs.isNotEmpty()) {
+            map[segs] = content
+            val stripped = segs.map { it.replace("_", "") }
+            if (stripped != segs) {
+               map.putIfAbsent(stripped, content)
+            }
 
-		entries = entryList
-		cleanExactMap = cExact
-		caseInsensitiveMap = ciMap
-		escapeUnderscoreMap = euMap
-		escapeUnderscoreCollapsedMap = eucMap
-		escapeRemovedMap = erMap
-		filenameMap = fnMap
-		filenameEscapeUnderscoreMap = fnEuMap
-		filenameEscapeRemovedMap = fnErMap
-	}
+            val pair = segs to content
+            val leaf = segs.lastOrNull()
+            if (leaf != null) {
+               leaves.computeIfAbsent(leaf) { ArrayList() }.add(pair)
+               val strippedLeaf = leaf.replace("_", "")
+               if (strippedLeaf != leaf) {
+                  leaves.computeIfAbsent(strippedLeaf) { ArrayList() }.add(pair)
+               }
 
-	override operator fun get(path: String): Content? {
-		return get(path, null)
-	}
+               val base = leaf.substringBeforeLast('.')
+               if (base.isNotEmpty()) {
+                  baseNames.computeIfAbsent(base) { ArrayList() }.add(pair)
+                  val strippedBase = base.replace("_", "")
+                  if (strippedBase != base) {
+                     baseNames.computeIfAbsent(strippedBase) { ArrayList() }.add(pair)
+                  }
+               }
+            }
+         }
+      }
 
-	fun get(path: String, rawPath: String?): Content? {
-		// 1. Direct super check (fastest path)
-		super.get(path)?.let { return it }
-		if (rawPath != null) {
-			super.get(rawPath)?.let { return it }
-		}
+      nmap = map
+      leafIndex = leaves
+      baseNameIndex = baseNames
+   }
 
-		val cacheKey = if (rawPath != null && rawPath != path) "$path||$rawPath" else path
-		if (negativeCache.contains(cacheKey)) return null
-		cache[cacheKey]?.let { return it }
+   open fun warnLooseMatch(requested: String, matched: Content, reason: String) {}
 
-		val result = resolveLoose(path, rawPath)
-		if (result != null) {
-			cache[cacheKey] = result
-		} else {
-			negativeCache.add(cacheKey)
-		}
-		return result
-	}
+   override operator fun get(path: String): Content? = get(path, null)
 
-	private fun resolveLoose(path: String, rawPath: String?): Content? {
-		val qPaths = listOfNotNull(path, rawPath).map { clean(it) }.distinct().filter { it.isNotEmpty() }
-		if (qPaths.isEmpty()) return null
+   fun get(path: String, rawPath: String? = null): Content? {
+      if (path.trim('/', '\\').isBlank()) {
+         return get("index.html", rawPath)
+      }
 
-		// Stage 1: Exact clean path match
-		for (q in qPaths) {
-			cleanExactMap[q]?.let { return it }
-		}
+      // 1. Direct location map lookup (e.g. original absolute URL or CID)
+      locationMap?.get(path)?.let { return it }
+      if (rawPath != null) {
+         locationMap?.get(rawPath)?.let { return it }
+      }
 
-		// Stage 2: Case-insensitive full path match
-		for (q in qPaths) {
-			caseInsensitiveMap[q.lowercase()]?.let { return it }
-		}
+      // 2. Exact match on raw/passed path
+      super.get(path)?.let { return it }
+      if (rawPath != null) {
+         super.get(rawPath)?.let { return it }
+      }
 
-		// Stage 3: Escape-normalized full path match
-		for (q in qPaths) {
-			val qLower = q.lowercase()
-			val eu = escapeToUnderscore(qLower)
-			escapeUnderscoreMap[eu]?.let { return it }
-			escapeUnderscoreCollapsedMap[collapseUnderscores(eu)]?.let { return it }
-			val er = escapeRemoved(qLower)
-			escapeRemovedMap[er]?.let { return it }
-		}
+      val cacheKey = if (rawPath != null && rawPath != path) "$path||$rawPath" else path
+      if (negativeCache.contains(cacheKey)) return null
+      cache[cacheKey]?.let { return it }
 
-		// Stage 4 & 5: Path-robust and simple filename match
-		var bestMatch: ScoredMatch? = null
+      val npath = normalizeAndSegment(path)
+      var matchReason = "normalized path"
+      val content = nmap[npath]
+         ?: nmap[npath.map { it.replace("_", "") }]
+         ?: run {
+            val leaf = npath.lastOrNull()
+            val leafStripped = leaf?.replace("_", "")
+            val candidates = ArrayList<Pair<List<String>, Content>>()
+            if (leaf != null) {
+               leafIndex[leaf]?.let { candidates.addAll(it) }
+               if (leafStripped != null && leafStripped != leaf) {
+                  leafIndex[leafStripped]?.let { candidates.addAll(it) }
+               }
+               // Check equivalent web extensions (.html <-> .htm, .jpeg <-> .jpg)
+               if (candidates.isEmpty()) {
+                  val altLeaf = when {
+                     leaf.endsWith(".html") -> leaf.removeSuffix("l")
+                     leaf.endsWith(".htm") -> leaf + "l"
+                     leaf.endsWith(".jpeg") -> leaf.substringBeforeLast('.') + ".jpg"
+                     leaf.endsWith(".jpg") -> leaf.substringBeforeLast('.') + ".jpeg"
+                     else -> null
+                  }
+                  if (altLeaf != null) {
+                     leafIndex[altLeaf]?.let { candidates.addAll(it) }
+                     val altLeafStripped = altLeaf.replace("_", "")
+                     if (altLeafStripped != altLeaf) {
+                        leafIndex[altLeafStripped]?.let { candidates.addAll(it) }
+                     }
+                  }
+               }
+               // Base name match without extension (e.g. cid:css-12345 or extensionless link)
+               if (candidates.isEmpty() && (!leaf.contains('.') || path.contains("cid:", ignoreCase = true) || path.contains("@mhtml.blink", ignoreCase = true))) {
+                  val base = leaf.substringBeforeLast('.')
+                  baseNameIndex[base]?.let { candidates.addAll(it) }
+                  val baseStripped = base.replace("_", "")
+                  if (baseStripped != base) {
+                     baseNameIndex[baseStripped]?.let { candidates.addAll(it) }
+                  }
+               }
+               // If index.html requested and not found, check common defaults or sole HTML file
+               if (candidates.isEmpty() && (leaf == "index.html" || leaf == "index.htm")) {
+                  for (defaultName in listOf("default.html", "default.htm", "main.html", "main.htm", "home.html", "home.htm")) {
+                     leafIndex[defaultName]?.let { candidates.addAll(it) }
+                     if (candidates.isNotEmpty()) break
+                  }
+                  if (candidates.isEmpty()) {
+                     val htmlFiles = list.filter { it.ext.equals("html", ignoreCase = true) || it.ext.equals("htm", ignoreCase = true) }
+                     if (htmlFiles.size == 1) {
+                        val singleHtml = htmlFiles[0]
+                        val segs = normalizeAndSegment(singleHtml.path)
+                        candidates.add(segs to singleHtml)
+                     }
+                  }
+               }
+            }
 
-		for (q in qPaths) {
-			val reqSegs = splitSegments(q)
-			if (reqSegs.isEmpty()) continue
-			val reqFn = reqSegs.last()
-			val reqFnLower = reqFn.lowercase()
-			val reqFnEuLower = escapeToUnderscore(reqFnLower)
-			val reqFnErLower = escapeRemoved(reqFnLower)
+            // Pick candidate with the highest matching suffix segments
+            var bestScore = 0
+            var bestContent: Content? = null
+            var bestLengthDiff = Int.MAX_VALUE
 
-			val candidateEntries = LinkedHashSet<Entry>()
-			filenameMap[reqFnLower]?.let { candidateEntries.addAll(it) }
-			filenameEscapeUnderscoreMap[reqFnEuLower]?.let { candidateEntries.addAll(it) }
-			filenameEscapeUnderscoreMap[collapseUnderscores(reqFnEuLower)]?.let { candidateEntries.addAll(it) }
-			filenameEscapeRemovedMap[reqFnErLower]?.let { candidateEntries.addAll(it) }
+            for ((candidatePath, candContent) in candidates) {
+               val score = countMatchingSuffixSegments(candidatePath, npath)
+               if (score > bestScore) {
+                  bestScore = score
+                  bestContent = candContent
+                  bestLengthDiff = kotlin.math.abs(candidatePath.size - npath.size)
+               } else if (score == bestScore && score > 0) {
+                  val diff = kotlin.math.abs(candidatePath.size - npath.size)
+                  if (diff < bestLengthDiff) {
+                     bestContent = candContent
+                     bestLengthDiff = diff
+                  }
+               }
+            }
+            if (bestContent == null && candidates.isNotEmpty() && (leaf == "index.html" || leaf == "index.htm" || (leaf != null && !leaf.contains('.')) || path.contains("cid:", ignoreCase = true))) {
+               bestContent = candidates[0].second
+            }
+            if (bestContent != null) {
+               matchReason = if (bestScore > 0) "suffix match score=$bestScore" else "loose candidate match"
+            }
+            bestContent
+         }
 
-			for (entry in candidateEntries) {
-				val candSegs = entry.segments
-				val maxK = minOf(reqSegs.size, candSegs.size)
-				var matchingSegs = 0
-				var scoreSum = 0
-
-				for (step in 1..maxK) {
-					val rSeg = reqSegs[reqSegs.size - step]
-					val cSeg = candSegs[candSegs.size - step]
-					val segScore = matchSegment(rSeg, cSeg)
-					if (segScore > 0) {
-						matchingSegs++
-						scoreSum += segScore
-					} else {
-						break
-					}
-				}
-
-				if (matchingSegs > 0) {
-					val isComplete = matchingSegs == reqSegs.size || matchingSegs == candSegs.size
-					val scored = ScoredMatch(
-						entry = entry,
-						matchingSegments = matchingSegs,
-						isCompleteSubpath = isComplete,
-						segmentMatchScore = scoreSum,
-						pathLengthDiff = abs(candSegs.size - reqSegs.size),
-						totalCandSegments = candSegs.size,
-						candPath = entry.cleanPath
-					)
-					if (bestMatch == null || scored < bestMatch) {
-						bestMatch = scored
-					}
-				}
-			}
-		}
-
-		return bestMatch?.entry?.content
-	}
-
-	private class ScoredMatch(
-		val entry: Entry,
-		val matchingSegments: Int,
-		val isCompleteSubpath: Boolean,
-		val segmentMatchScore: Int,
-		val pathLengthDiff: Int,
-		val totalCandSegments: Int,
-		val candPath: String
-	) : Comparable<ScoredMatch> {
-		override fun compareTo(other: ScoredMatch): Int {
-			// 1. More matching segments first (higher is better)
-			if (this.matchingSegments != other.matchingSegments) {
-				return other.matchingSegments.compareTo(this.matchingSegments)
-			}
-			// 2. Complete subpath match (higher is better)
-			if (this.isCompleteSubpath != other.isCompleteSubpath) {
-				return if (this.isCompleteSubpath) -1 else 1
-			}
-			// 3. Higher segment score first
-			if (this.segmentMatchScore != other.segmentMatchScore) {
-				return other.segmentMatchScore.compareTo(this.segmentMatchScore)
-			}
-			// 4. Smaller difference in path length first
-			if (this.pathLengthDiff != other.pathLengthDiff) {
-				return this.pathLengthDiff.compareTo(other.pathLengthDiff)
-			}
-			// 5. Shorter candidate path (fewer directories deep)
-			if (this.totalCandSegments != other.totalCandSegments) {
-				return this.totalCandSegments.compareTo(other.totalCandSegments)
-			}
-			// 6. Alphabetical for stability
-			return this.candPath.compareTo(other.candPath)
-		}
-	}
-
-	companion object {
-		private val URL_ESCAPE_REGEX = Regex("%[0-9a-fA-F]{2}")
-		private val PUNCT_TO_UNDERSCORE_REGEX = Regex("""[()\[\],!$'"]""")
-
-		fun clean(p: String): String {
-			val normalized = p.replace('\\', '/').trim('/')
-			if (!normalized.contains('/')) {
-				return if (normalized == "." || normalized == "..") "" else normalized
-			}
-			val parts = normalized.split('/')
-			val resolved = mutableListOf<String>()
-			for (part in parts) {
-				if (part == "..") {
-					if (resolved.isNotEmpty()) resolved.removeAt(resolved.size - 1)
-				} else if (part.isNotEmpty() && part != ".") {
-					resolved.add(part)
-				}
-			}
-			return resolved.joinToString("/")
-		}
-
-		fun splitSegments(cleanPath: String): List<String> {
-			if (cleanPath.isEmpty()) return emptyList()
-			return cleanPath.split('/').filter { it.isNotEmpty() }
-		}
-
-		fun escapeToUnderscore(s: String): String {
-			return s.replace(URL_ESCAPE_REGEX, "_")
-				.replace(PUNCT_TO_UNDERSCORE_REGEX, "_")
-				.replace(' ', '_')
-				.replace('+', '_')
-		}
-
-		fun collapseUnderscores(s: String): String {
-			return s.replace(Regex("_+"), "_")
-		}
-
-		fun escapeRemoved(s: String): String {
-			return s.replace(URL_ESCAPE_REGEX, "")
-				.replace(PUNCT_TO_UNDERSCORE_REGEX, "")
-				.replace(" ", "")
-				.replace("+", "")
-				.replace("_", "")
-		}
-
-		fun matchSegment(r: String, c: String): Int {
-			if (r == c) return 5
-			if (r.equals(c, ignoreCase = true)) return 4
-			val rLower = r.lowercase()
-			val cLower = c.lowercase()
-			val rEu = escapeToUnderscore(rLower)
-			val cEu = escapeToUnderscore(cLower)
-			if (rEu == cEu) return 3
-			if (collapseUnderscores(rEu) == collapseUnderscores(cEu)) return 2
-			val rEr = escapeRemoved(rLower)
-			val cEr = escapeRemoved(cLower)
-			if (rEr == cEr) return 1
-			return 0
-		}
-	}
+      if (content != null) {
+         cache[cacheKey] = content
+         warnLooseMatch(path, content, matchReason)
+      } else {
+         negativeCache.add(cacheKey)
+      }
+      return content
+   }
 }
