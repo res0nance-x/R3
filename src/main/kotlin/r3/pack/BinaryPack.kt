@@ -1,14 +1,12 @@
 package r3.pack
 
 import r3.content.Content
-import r3.content.ContentMeta
 import r3.io.*
 import r3.source.Sink
 import r3.source.Source
 import r3.source.copyTo
-import java.io.DataInputStream
-import java.io.DataOutputStream
-import java.io.InputStream
+import java.io.*
+import java.util.zip.CRC32
 
 open class BinaryPack(val src: Source) : Pack, Writable {
 	protected val contentList = ArrayList<Content>()
@@ -16,46 +14,101 @@ open class BinaryPack(val src: Source) : Pack, Writable {
 	init {
 		src.createInputStream().buffered(DEFAULT_COPY_BUFFER_SIZE).let { istream ->
 			DataInputStream(istream).use { stream ->
-				var currentOffset = 0L
+				var currentBlockOffset = 0L
 				try {
 					while (true) {
-						stream.mark(1)
-						val nextByte = stream.read()
-						if (nextByte == -1) break
-						stream.reset()
-
-						val header = ContentMeta.read(stream)
-						if (header.length < 0) {
-							throw java.io.IOException("Invalid ContentHeader length ${header.length}")
+						val magic: Int
+						try {
+							magic = stream.readInt()
+						} catch (_: EOFException) {
+							break
 						}
-						val nameBytes = header.name.toByteArray().size
-						val typeBytes = header.type.toByteArray().size
-						val headerSize = 24L + nameBytes + typeBytes
-						val pos = currentOffset + headerSize
+						if (magic != MAGIC_INDEX) {
+							throw IOException("Invalid BinaryPack magic: 0x${Integer.toHexString(magic)}")
+						}
 
-						contentList.add(object : Content {
-							override val path: String = header.name
-							override val ext: String = header.type
-							override val lastModified: Long = if (header.created > 0) header.created else 0L
-							override val length: Long = header.length
-							override fun createInputStream(): InputStream {
-								val itemStream = src.createInputStream()
-								itemStream.skipFullBytes(pos)
-								return BoundedInputStream(
-									itemStream,
-									header.length
-								)
+						val version = stream.readShort()
+						if (version != VERSION) {
+							throw IOException("Unsupported BinaryPack version: $version")
+						}
+
+						val entryCount = stream.readInt()
+						if (entryCount !in 0..MAX_ENTRY_COUNT) {
+							throw IOException("Invalid entryCount: $entryCount")
+						}
+
+						val totalSpan = stream.readLong()
+						if (totalSpan < 0) {
+							throw IOException("Invalid totalSpan: $totalSpan")
+						}
+
+						val indexDataSize = stream.readInt()
+						if (indexDataSize !in 0..MAX_INDEX_DATA_SIZE) {
+							throw IOException("Invalid indexDataSize: $indexDataSize")
+						}
+
+						val expectedCrc = stream.readInt()
+						val indexData = ByteArray(indexDataSize)
+						stream.readFully(indexData)
+
+						val actualCrc = CRC32().apply { update(indexData) }.value.toInt()
+						if (actualCrc != expectedCrc) {
+							throw IOException("CRC32 mismatch in BinaryPack index header")
+						}
+
+						val payloadBasePos = currentBlockOffset + HEADER_SIZE + indexDataSize
+						var currentRelativeOffset = 0L
+
+						DataInputStream(ByteArrayInputStream(indexData)).use { tableStream ->
+							for (i in 0 until entryCount) {
+								val flag = tableStream.readByte()
+								val name = readSafeString(tableStream, MAX_PATH_LENGTH)
+								val type = readSafeString(tableStream, MAX_TYPE_LENGTH)
+								val length = tableStream.readLong()
+								val created = tableStream.readLong()
+
+								when (flag) {
+									FLAG_DELETED -> {
+										contentList.removeAll { it.path == name }
+									}
+									FLAG_ACTIVE -> {
+										if (length < 0) {
+											throw IOException("Invalid content length: $length")
+										}
+										val entryPos = payloadBasePos + currentRelativeOffset
+										currentRelativeOffset += length
+
+										contentList.add(object : Content {
+											override val path: String = name
+											override val ext: String = type
+											override val lastModified: Long = if (created > 0) created else 0L
+											override val length: Long = length
+											override fun createInputStream(): InputStream {
+												val itemStream = src.createInputStream()
+												itemStream.skipFullBytes(entryPos)
+												return BoundedInputStream(itemStream, length)
+											}
+
+											override fun toString(): String {
+												return "$path $ext $length"
+											}
+										})
+									}
+									else -> {
+										throw IOException("Unknown entry flag: $flag")
+									}
+								}
 							}
+						}
 
-							override fun toString(): String {
-								return "$path $ext $length"
-							}
-						})
+						if (currentRelativeOffset != totalSpan) {
+							throw IOException("Index totalSpan mismatch: expected $totalSpan, got $currentRelativeOffset")
+						}
 
-						stream.skipFullBytes(header.length)
-						currentOffset = pos + header.length
+						stream.skipFullBytes(totalSpan)
+						currentBlockOffset = payloadBasePos + totalSpan
 					}
-				} catch (_: java.io.EOFException) {
+				} catch (_: EOFException) {
 					// Normal end of pack
 				} catch (e: Exception) {
 					log(e)
@@ -73,28 +126,131 @@ open class BinaryPack(val src: Source) : Pack, Writable {
 	}
 
 	companion object {
+		const val MAGIC_INDEX = 0x5233504B // "R3PK"
+		const val VERSION: Short = 1
+		const val HEADER_SIZE = 26L // 4 (magic) + 2 (ver) + 4 (count) + 8 (span) + 4 (size) + 4 (crc)
+
+		const val FLAG_ACTIVE: Byte = 0
+		const val FLAG_DELETED: Byte = 1
+
+		const val MAX_PATH_LENGTH = 4096
+		const val MAX_TYPE_LENGTH = 128
+		const val MAX_ENTRY_COUNT = 10_000_000
+		const val MAX_INDEX_DATA_SIZE = 100_000_000 // 100 MB
+
+		private fun writeSafeString(dos: DataOutputStream, s: String, maxLength: Int) {
+			val bytes = s.toByteArray(Charsets.UTF_8)
+			if (bytes.size > maxLength) {
+				throw IOException("String exceeds maximum allowed length of $maxLength: ${bytes.size}")
+			}
+			dos.writeInt(bytes.size)
+			dos.write(bytes)
+		}
+
+		private fun readSafeString(dis: DataInputStream, maxLength: Int): String {
+			val len = dis.readInt()
+			if (len !in 0..maxLength) {
+				throw IOException("Invalid string length: $len (max: $maxLength)")
+			}
+			val bytes = ByteArray(len)
+			dis.readFully(bytes)
+			return String(bytes, Charsets.UTF_8)
+		}
+
 		fun create(
 			content: Iterable<Content>, sink: Sink,
 			progress: (Int) -> Unit = { _ -> }
 		) {
+			val items = if (content is Collection<Content>) content else content.toList()
 			sink.createOutputStream().buffered(DEFAULT_COPY_BUFFER_SIZE).use { ostream ->
-				val size = content.count().toDouble()
 				DataOutputStream(ostream).use { dos ->
+					val tableBaos = ByteArrayOutputStream()
+					val tableDos = DataOutputStream(tableBaos)
+					var totalSpan = 0L
+
+					for (item in items) {
+						tableDos.writeByte(FLAG_ACTIVE.toInt())
+						writeSafeString(tableDos, item.path, MAX_PATH_LENGTH)
+						writeSafeString(tableDos, item.ext, MAX_TYPE_LENGTH)
+						tableDos.writeLong(item.length)
+						tableDos.writeLong(item.lastModified)
+						totalSpan += item.length
+					}
+					tableDos.flush()
+
+					val indexData = tableBaos.toByteArray()
+					val crc32 = CRC32().apply { update(indexData) }.value.toInt()
+
+					dos.writeInt(MAGIC_INDEX)
+					dos.writeShort(VERSION.toInt())
+					dos.writeInt(items.size)
+					dos.writeLong(totalSpan)
+					dos.writeInt(indexData.size)
+					dos.writeInt(crc32)
+					dos.write(indexData)
+
+					val size = items.size.toDouble()
 					var count = 0
-					content.forEach { content ->
-						ContentMeta(content).write(dos)
-						content.createInputStream().buffered(DEFAULT_COPY_BUFFER_SIZE).use { it.copyTo(dos, DEFAULT_COPY_BUFFER_SIZE) }
-						++count
-						progress((count.toDouble() / size * 100).toInt())
+					for (item in items) {
+						item.createInputStream().buffered(DEFAULT_COPY_BUFFER_SIZE).use {
+							it.copyTo(dos, DEFAULT_COPY_BUFFER_SIZE)
+						}
+						count++
+						if (size > 0) {
+							progress((count.toDouble() / size * 100).toInt())
+						}
 					}
 				}
 			}
 		}
+
 		fun append(
 			content: Iterable<Content>, sink: Sink,
 			progress: (Int) -> Unit = { _ -> }
 		) {
 			create(content, sink, progress)
+		}
+
+		fun delete(
+			paths: Iterable<String>, sink: Sink
+		) {
+			val pathList = paths as? Collection<String> ?: paths.toList()
+			if (pathList.isEmpty()) return
+
+			sink.createOutputStream().buffered(DEFAULT_COPY_BUFFER_SIZE).use { ostream ->
+				DataOutputStream(ostream).use { dos ->
+					val tableBaos = ByteArrayOutputStream()
+					val tableDos = DataOutputStream(tableBaos)
+
+					for (p in pathList) {
+						tableDos.writeByte(FLAG_DELETED.toInt())
+						writeSafeString(tableDos, p, MAX_PATH_LENGTH)
+						writeSafeString(tableDos, "", MAX_TYPE_LENGTH)
+						tableDos.writeLong(0L)
+						tableDos.writeLong(System.currentTimeMillis())
+					}
+					tableDos.flush()
+
+					val indexData = tableBaos.toByteArray()
+					val crc32 = CRC32().apply { update(indexData) }.value.toInt()
+
+					dos.writeInt(MAGIC_INDEX)
+					dos.writeShort(VERSION.toInt())
+					dos.writeInt(pathList.size)
+					dos.writeLong(0L) // No payloads
+					dos.writeInt(indexData.size)
+					dos.writeInt(crc32)
+					dos.write(indexData)
+				}
+			}
+		}
+
+		fun compact(
+			source: Source, sink: Sink,
+			progress: (Int) -> Unit = { _ -> }
+		) {
+			val pack = BinaryPack(source)
+			create(pack, sink, progress)
 		}
 	}
 }

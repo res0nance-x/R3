@@ -40,3 +40,10 @@ tasks.register<JavaExec>("runHub") {
 	mainClass.set("r3.io.FileMessageHubTest")
 	standardInput = System.`in`
 }
+
+tasks.register<JavaExec>("convertPacks") {
+	group = "application"
+	description = "Converts legacy BinaryPack files in a directory to the new format."
+	classpath = sourceSets["main"].runtimeClasspath
+	mainClass.set("r3.pack.BinaryPackConverterKt")
+}
