@@ -173,7 +173,7 @@ object BinaryPackConverter {
 }
 
 fun main(args: Array<String>) {
-	val targetDir = if (args.isNotEmpty()) File(args[0]) else File("""E:\Downloads\audio""")
+	val targetDir = if (args.isNotEmpty()) File(args[0]) else File("""E:\Downloads\""")
 	println("Starting conversion of pack files in: ${targetDir.absolutePath}")
 	BinaryPackConverter.convertDirectory(targetDir)
 	println("All conversions complete!")
