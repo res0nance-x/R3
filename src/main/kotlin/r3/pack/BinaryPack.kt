@@ -157,12 +157,47 @@ open class BinaryPack(val src: Source) : Pack, Writable {
 			return String(bytes, Charsets.UTF_8)
 		}
 
-		fun create(
-			content: Iterable<Content>, sink: Sink,
-			progress: (Int) -> Unit = { _ -> }
+		fun isNewFormat(source: Source): Boolean {
+			return try {
+				source.createInputStream().use { stream ->
+					val buf = ByteArray(4)
+					var totalRead = 0
+					while (totalRead < 4) {
+						val r = stream.read(buf, totalRead, 4 - totalRead)
+						if (r < 0) break
+						totalRead += r
+					}
+					totalRead == 4 &&
+							buf[0] == 0x52.toByte() &&
+							buf[1] == 0x33.toByte() &&
+							buf[2] == 0x50.toByte() &&
+							buf[3] == 0x4B.toByte() // "R3PK"
+				}
+			} catch (_: Exception) {
+				false
+			}
+		}
+
+		fun open(source: Source): Pack {
+			return if (isNewFormat(source)) {
+				BinaryPack(source)
+			} else {
+				LegacyBinaryPack(source)
+			}
+		}
+
+		fun createWithProgress(
+			content: Iterable<Content>,
+			sink: Sink,
+			bufferSize: Int = DEFAULT_COPY_BUFFER_SIZE,
+			onProgress: (bytesCopied: Long, totalBytes: Long, currentFile: String) -> Unit = { _, _, _ -> }
 		) {
 			val items = if (content is Collection<Content>) content else content.toList()
-			sink.createOutputStream().buffered(DEFAULT_COPY_BUFFER_SIZE).use { ostream ->
+			val totalBytes = items.sumOf { it.length }
+			val totalFiles = items.size
+			val buffer = ByteArray(bufferSize)
+
+			sink.createOutputStream().buffered(bufferSize).use { ostream ->
 				DataOutputStream(ostream).use { dos ->
 					val tableBaos = ByteArrayOutputStream()
 					val tableDos = DataOutputStream(tableBaos)
@@ -189,16 +224,55 @@ open class BinaryPack(val src: Source) : Pack, Writable {
 					dos.writeInt(crc32)
 					dos.write(indexData)
 
-					val size = items.size.toDouble()
-					var count = 0
+					var bytesCopied = 0L
+					var fileCount = 0
 					for (item in items) {
-						item.createInputStream().buffered(DEFAULT_COPY_BUFFER_SIZE).use {
-							it.copyTo(dos, DEFAULT_COPY_BUFFER_SIZE)
+						item.createInputStream().use { istream ->
+							var read = istream.read(buffer)
+							while (read >= 0) {
+								if (read > 0) {
+									dos.write(buffer, 0, read)
+									bytesCopied += read
+									onProgress(bytesCopied, totalBytes, item.path)
+								}
+								read = istream.read(buffer)
+							}
 						}
-						count++
-						if (size > 0) {
-							progress((count.toDouble() / size * 100).toInt())
+						fileCount++
+						if (totalBytes == 0L) {
+							onProgress(fileCount.toLong(), totalFiles.toLong(), item.path)
+						} else {
+							onProgress(bytesCopied, totalBytes, item.path)
 						}
+					}
+				}
+			}
+		}
+
+		fun appendWithProgress(
+			content: Iterable<Content>,
+			sink: Sink,
+			bufferSize: Int = DEFAULT_COPY_BUFFER_SIZE,
+			onProgress: (bytesCopied: Long, totalBytes: Long, currentFile: String) -> Unit = { _, _, _ -> }
+		) {
+			createWithProgress(content, sink, bufferSize, onProgress)
+		}
+
+		fun create(
+			content: Iterable<Content>, sink: Sink,
+			progress: (Int) -> Unit = { _ -> }
+		) {
+			val items = if (content is Collection<Content>) content else content.toList()
+			val totalBytes = items.sumOf { it.length }
+			val size = items.size.toDouble()
+			var count = 0
+			createWithProgress(items, sink) { bytesCopied, total, _ ->
+				if (total > 0) {
+					progress(((bytesCopied.toDouble() / total) * 100).toInt().coerceIn(0, 100))
+				} else {
+					count++
+					if (size > 0) {
+						progress(((count / size) * 100).toInt().coerceIn(0, 100))
 					}
 				}
 			}

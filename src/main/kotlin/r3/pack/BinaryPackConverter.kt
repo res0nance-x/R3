@@ -85,15 +85,7 @@ object BinaryPackConverter {
 	 */
 	fun isNewFormat(file: File): Boolean {
 		if (!file.exists() || file.length() < 4) return false
-		file.inputStream().use { input ->
-			val buf = ByteArray(4)
-			val read = input.read(buf)
-			if (read < 4) return false
-			return buf[0] == 0x52.toByte() &&
-					buf[1] == 0x33.toByte() &&
-					buf[2] == 0x50.toByte() &&
-					buf[3] == 0x4B.toByte() // "R3PK"
-		}
+		return BinaryPack.isNewFormat(FileSource(file))
 	}
 
 	/**

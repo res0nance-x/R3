@@ -6,9 +6,13 @@ import r3.source.createSink
 import java.io.File
 import java.io.OutputStream
 
-class EncryptedSink(val seq: EncryptedSequence, val sink: Sink, val initialPos: Long = 0L) : Sink {
+class EncryptedSink(val seq: EncryptedSequence, val sink: Sink, val initialPos: Long = 0L) : Sink, AutoCloseable {
 	override fun createOutputStream(): OutputStream {
-		return EncryptedContinuousOutputStream(seq, sink.createOutputStream(), initialPos)
+		return EncryptedContinuousOutputStream(seq, sink.createOutputStream(), initialPos, autoCloseSeq = false)
+	}
+
+	override fun close() {
+		seq.close()
 	}
 }
 
