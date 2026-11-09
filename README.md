@@ -8,6 +8,6 @@ Used by GraffitiCore (and other projects)
 * **Core Subsystems Provided**:
   * `r3.net`: Socket, IP discovery, and JSON communication.
   * `r3.http`: Request routing, captive portal, range requests, file and resource handlers.
-  * `r3.pack`: Pack file format packaging, hashing, and streaming.
+  * `r3.pack`: Pack file format packaging, hashing, and streaming (see [BinaryPack Specification](docs/BINARY_PACK_SPEC.md)).
   * `r3.encryption` & `r3.pke`: Asymmetric and symmetric cryptography (AES, RSA, ECC).
   * `r3.upnp`: UPnP Gateway discovery and NAT port mapping.
