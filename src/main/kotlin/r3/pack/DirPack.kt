@@ -6,18 +6,14 @@ import r3.io.consistentPath
 import java.io.File
 
 class DirPack(val dir: File) : Pack {
-	private val list = ArrayList<Content>()
-
-	init {
+	override fun iterator(): Iterator<Content> {
+		val list = ArrayList<Content>()
 		if (dir.exists()) {
 			dir.walk().filter { it.isFile }.forEach { file ->
 				val content = FileContent(file = file, root = dir.consistentPath())
 				list.add(content)
 			}
 		}
-	}
-
-	override fun iterator(): Iterator<Content> {
 		return list.iterator()
 	}
 }

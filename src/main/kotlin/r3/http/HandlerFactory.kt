@@ -3,6 +3,7 @@ package r3.http
 import org.nanohttpd.protocols.http.response.Response
 import r3.content.*
 import r3.key.Key128
+import r3.net.tcp.TCPPack
 import r3.org.json.JSONArray
 import r3.org.json.JSONObject
 import r3.pack.*
@@ -215,12 +216,33 @@ object HandlerFactory {
    @JvmOverloads
    fun createPackHandler(pack: Pack, loose: Boolean = true): ContentHandler {
       return object : ContentHandler {
-         val contentList = pack.toList().sortedWith { a, b -> a.path.compareTo(b.path) }
-         val packMap = when {
+         val isDynamic = pack is TCPPack || pack is DirPack
+         @Volatile
+         var contentList = pack.toList().sortedWith { a, b -> a.path.compareTo(b.path) }
+         @Volatile
+         var packMap = buildMap(contentList)
+         @Volatile
+         var lastRefreshMs = System.currentTimeMillis()
+
+         private fun buildMap(list: List<Content>): PackMap = when {
             pack is MhtmlPack -> pack.packMap
             pack is MHTPackMap -> pack
-            loose -> LoosePackMap(contentList)
-            else -> PackMap(contentList)
+            loose -> LoosePackMap(list)
+            else -> PackMap(list)
+         }
+
+         @Synchronized
+         private fun refreshDynamicPack(force: Boolean = false) {
+            if (!isDynamic) return
+            val now = System.currentTimeMillis()
+            if (!force && now - lastRefreshMs < 2000L) return
+            try {
+               val updatedList = pack.toList().sortedWith { a, b -> a.path.compareTo(b.path) }
+               contentList = updatedList
+               packMap = buildMap(updatedList)
+               lastRefreshMs = now
+            } catch (_: Exception) {
+            }
          }
 
          override fun handle(header: JSONObject, content: Content?): Content? {
@@ -228,9 +250,14 @@ object HandlerFactory {
             val rawPath = header.optString("rawPath", null)
             val key = path.removePrefix("/")
             val rawKey = rawPath?.removePrefix("/")
+            if (isDynamic && (key == "pack_list" || key == "" || key == "index.html")) {
+               refreshDynamicPack(force = key == "pack_list")
+            }
+            val currentList = contentList
+            val currentMap = packMap
             return if (key == "pack_list") {
                val json = JSONArray()
-               for (itemContent in contentList) {
+               for (itemContent in currentList) {
                   json.put(JSONObject().apply {
                      put("path", itemContent.path)
                      put("type", itemContent.getMimeType())
@@ -240,10 +267,21 @@ object HandlerFactory {
                }
                BinaryContent(json.toString(2).toByteArray(), "pack_list.json", "json")
             } else {
-               if (packMap is LoosePackMap) {
-                  packMap.get(key, rawKey)
+               val matched = if (currentMap is LoosePackMap) {
+                  currentMap.get(key, rawKey)
                } else {
-                  packMap[key]
+                  currentMap[key]
+               }
+               if (matched == null && isDynamic) {
+                  refreshDynamicPack(force = false)
+                  val retryMap = packMap
+                  if (retryMap is LoosePackMap) {
+                     retryMap.get(key, rawKey)
+                  } else {
+                     retryMap[key]
+                  }
+               } else {
+                  matched
                }
             }
          }
