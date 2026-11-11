@@ -279,8 +279,7 @@ fun rangeRequestResponse(session: IHTTPSession, content: Content): Response {
         } catch (e: Exception) {
             filename
         }
-        val dispositionType = if (content.ext in setOf("html", "htm", "css", "js", "json", "svg", "png", "jpg", "jpeg", "gif", "webp", "ico")) "inline" else "attachment"
-        response.addHeader("Content-Disposition", "$dispositionType; filename=\"$encodedFilename\"; filename*=UTF-8''$encodedFilename")
+        response.addHeader("Content-Disposition", "inline; filename=\"$encodedFilename\"; filename*=UTF-8''$encodedFilename")
     }
     return response
 }
