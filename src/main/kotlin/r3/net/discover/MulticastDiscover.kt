@@ -9,13 +9,13 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import kotlin.concurrent.thread
 
-class MulticastDiscover {
+class MulticastDiscover : IDiscover {
 	val ip6FixedMulticastAddress =
 		InetSocketAddress(InetAddress.getByName("ff32:8395:4ab6:e403:8f2a:b92f:beaa:80da"), 45228)
 	val ip4FixedMulticastAddress =
 		InetSocketAddress(InetAddress.getByName("239.255.45.228"), 45228)
 
-	fun discover(found: (PeerAddressInfo) -> Unit) {
+	override fun discover(found: (PeerAddressInfo) -> Unit) {
 		val threads = mutableListOf<Thread>()
 		for (inf in usableNetworkInterfaceList()) {
 			if (inf.supportsMulticast() && !inf.isLoopback && inf.isUp && !inf.isVirtual) {

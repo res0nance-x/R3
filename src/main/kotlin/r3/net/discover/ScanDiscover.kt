@@ -10,10 +10,10 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import kotlin.concurrent.thread
 
-class ScanDiscover() {
+class ScanDiscover : IDiscover {
 	private val sockList = ArrayList<DatagramSocket>()
 	private val scanPort = 52852
-	fun discover(found: (info: PeerAddressInfo) -> Unit) {
+	override fun discover(found: (info: PeerAddressInfo) -> Unit) {
 		for (inf in usableNetworkInterfaceList()) {
 			if (inf.supportsMulticast() && !inf.isLoopback && inf.isUp && !inf.isVirtual) {
 				thread {
