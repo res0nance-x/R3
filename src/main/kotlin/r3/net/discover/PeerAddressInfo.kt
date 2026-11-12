@@ -8,7 +8,13 @@ import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.net.InetAddress
 
-class PeerAddressInfo(val serverKey: ServerKey, val addrList: List<InetAddress>, val port: Int, val isRelay: Boolean = false) : Writable {
+class PeerAddressInfo(
+	val serverKey: ServerKey,
+	val addrList: List<InetAddress>,
+	val port: Int,
+	val isRelay: Boolean = false,
+	val isBridge: Boolean = false
+) : Writable {
 	override fun write(dos: DataOutputStream) {
 		serverKey.write(dos)
 		dos.writeInt(addrList.size)
@@ -17,6 +23,7 @@ class PeerAddressInfo(val serverKey: ServerKey, val addrList: List<InetAddress>,
 		}
 		dos.writeInt(port)
 		dos.writeBoolean(isRelay)
+		dos.writeBoolean(isBridge)
 	}
 
 	companion object {
@@ -25,7 +32,8 @@ class PeerAddressInfo(val serverKey: ServerKey, val addrList: List<InetAddress>,
 			val addrList = List(dis.readInt()) { InetAddressWritable.read(dis).addr }
 			val port = dis.readInt()
 			val isRelay = try { dis.readBoolean() } catch (e: Exception) { false }
-			return PeerAddressInfo(serverKey, addrList, port, isRelay)
+			val isBridge = try { dis.readBoolean() } catch (e: Exception) { false }
+			return PeerAddressInfo(serverKey, addrList, port, isRelay, isBridge)
 		}
 	}
 

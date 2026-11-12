@@ -42,7 +42,7 @@ class MulticastDiscover {
 										.filter { !it.isLinkLocalAddress }
 										.distinct()
 									if (updatedList.isNotEmpty()) {
-										found(PeerAddressInfo(info.serverKey, updatedList, info.port, info.isRelay))
+										found(PeerAddressInfo(info.serverKey, updatedList, info.port, info.isRelay, info.isBridge))
 									}
 								} catch (e: java.net.SocketTimeoutException) {
 									break
@@ -77,7 +77,7 @@ class MulticastDiscover {
 										.filter { !it.isLinkLocalAddress }
 										.distinct()
 									if (updatedList.isNotEmpty()) {
-										found(PeerAddressInfo(info.serverKey, updatedList, info.port, info.isRelay))
+										found(PeerAddressInfo(info.serverKey, updatedList, info.port, info.isRelay, info.isBridge))
 									}
 								} catch (e: java.net.SocketTimeoutException) {
 									break

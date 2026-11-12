@@ -10,10 +10,22 @@ import java.net.Socket
 import java.util.concurrent.LinkedBlockingDeque
 import java.util.concurrent.atomic.AtomicInteger
 
-class TCPNode(
-	private val socket: Socket,
-	val blockHandler: BlockHandler = SimpleBlockHandler()
+open class TCPNode protected constructor(
+	private val socket: Socket?,
+	val blockHandler: BlockHandler,
+	open val remoteAddress: InetSocketAddress,
+	open val remotePort: Int = remoteAddress.port
 ) : Closeable {
+	constructor(
+		socket: Socket,
+		blockHandler: BlockHandler = SimpleBlockHandler()
+	) : this(
+		socket,
+		blockHandler,
+		socket.remoteSocketAddress as InetSocketAddress,
+		(socket.remoteSocketAddress as InetSocketAddress).port
+	)
+
 	constructor(
 		socket: Socket,
 		contentHandler: (TCPNode, ByteArray, ByteArray?) -> Unit
@@ -26,12 +38,11 @@ class TCPNode(
 	) : this(socket, TCPBlockHandler(tempDir, contentHandler = contentHandler))
 
 	private val outDeque = LinkedBlockingDeque<TCPBlock>(100)
-	private val dis = DataInputStream(BufferedInputStream(socket.getInputStream(), DEFAULT_COPY_BUFFER_SIZE))
-	private val dos = DataOutputStream(BufferedOutputStream(socket.getOutputStream(), DEFAULT_COPY_BUFFER_SIZE))
-	val remoteAddress = socket.remoteSocketAddress as InetSocketAddress
+	private val dis = socket?.let { DataInputStream(BufferedInputStream(it.getInputStream(), DEFAULT_COPY_BUFFER_SIZE)) }
+	private val dos = socket?.let { DataOutputStream(BufferedOutputStream(it.getOutputStream(), DEFAULT_COPY_BUFFER_SIZE)) }
 
 	@Volatile
-	private var closeRequested = false
+	protected var closeRequested = false
 
 	/** Timestamp when this TCPNode was created. */
 	val connectedAtMs: Long = System.currentTimeMillis()
@@ -39,11 +50,18 @@ class TCPNode(
 	/** Updated on every received block — used by the application-level ping scheduler. */
 	@Volatile
 	var lastActivityMs: Long = connectedAtMs
-		private set
+		protected set
 
 	@Volatile
 	var lastWriteMs: Long = connectedAtMs
-		private set
+		protected set
+
+	/**
+	 * Optional interceptor invoked on readThread when a bridge-reserved block (id <= -2L) arrives.
+	 * Bypasses [blockHandler] completely so bridged blocks never create temporary stream files.
+	 */
+	@Volatile
+	var bridgeBlockInterceptor: ((node: TCPNode, block: TCPBlock) -> Unit)? = null
 
 	private val activeSendStreams = AtomicInteger(0)
 
@@ -77,65 +95,71 @@ class TCPNode(
 	var onClose: (() -> Unit)? = null
 
 	init {
-		try {
-			socket.tcpNoDelay = true
-			socket.keepAlive = true
-		} catch (e: Exception) {
-			log("TCPNode: Failed to set socket options: $e")
-		}
-
-		pthread {
+		if (socket != null && dis != null && dos != null) {
 			try {
-				while (!Thread.currentThread().isInterrupted) {
-					val block = TCPBlock.read(dis)
-					lastActivityMs = System.currentTimeMillis()
-					blockHandler.handle(this, block)
-				}
-			} catch (e: Throwable) {
-				if (!e.isNormalSocketClose(socket)) {
-					log("TCPNode readThread: $e for $this")
-				}
-			} finally {
-				this.close()
+				socket.tcpNoDelay = true
+				socket.keepAlive = true
+			} catch (e: Exception) {
+				log("TCPNode: Failed to set socket options: $e")
 			}
-		}
-		pthread {
-			try {
-				var batchStartTime = System.nanoTime()
-				var batchBytes = 0L
-				while (!Thread.currentThread().isInterrupted) {
-					val block = outDeque.take()
-					// ID can not be -1 normally, so use it as a signal to close
-					if (block.id == -1L) {
-						dos.flush()
-						break
-					}
-					block.write(dos)
-					lastWriteMs = System.currentTimeMillis()
-					batchBytes += block.data.size
-					if (outDeque.isEmpty() || block.last || batchBytes >= 4 * 1024 * 1024) {
-						dos.flush()
-						val elapsedMs = (System.nanoTime() - batchStartTime) / 1_000_000
-						// Adaptive percentage delay: pause for 15% of transmission time of this 4MB batch.
-						// Provides a clean 10-25ms airtime breather for Wi-Fi ACKs and MLO link rebalancing, tracking at ~87% of peak channel speed.
-						if (batchBytes >= 1024 * 1024 && elapsedMs > 5) {
-							val pauseMs = (elapsedMs * 0.15).toLong().coerceIn(5, 50)
-							try {
-								Thread.sleep(pauseMs)
-							} catch (_: InterruptedException) {
-								break
-							}
+
+			pthread {
+				try {
+					while (!Thread.currentThread().isInterrupted) {
+						val block = TCPBlock.read(dis)
+						lastActivityMs = System.currentTimeMillis()
+						if (block.id <= -2L) {
+							bridgeBlockInterceptor?.invoke(this, block)
+						} else {
+							blockHandler.handle(this, block)
 						}
-						batchStartTime = System.nanoTime()
-						batchBytes = 0L
 					}
+				} catch (e: Throwable) {
+					if (!e.isNormalSocketClose(socket)) {
+						log("TCPNode readThread: $e for $this")
+					}
+				} finally {
+					this.close()
 				}
-			} catch (e: Throwable) {
-				if (!e.isNormalSocketClose(socket)) {
-					log("TCPNode writeThread: $e for $this")
+			}
+			pthread {
+				try {
+					var batchStartTime = System.nanoTime()
+					var batchBytes = 0L
+					while (!Thread.currentThread().isInterrupted) {
+						val block = outDeque.take()
+						// ID can not be -1 normally, so use it as a signal to close
+						if (block.id == -1L) {
+							dos.flush()
+							break
+						}
+						block.write(dos)
+						lastWriteMs = System.currentTimeMillis()
+						batchBytes += block.data.size
+						if (outDeque.isEmpty() || block.last || batchBytes >= 4 * 1024 * 1024) {
+							dos.flush()
+							val elapsedMs = (System.nanoTime() - batchStartTime) / 1_000_000
+							// Adaptive percentage delay: pause for 15% of transmission time of this 4MB batch.
+							// Provides a clean 10-25ms airtime breather for Wi-Fi ACKs and MLO link rebalancing, tracking at ~87% of peak channel speed.
+							if (batchBytes >= 1024 * 1024 && elapsedMs > 5) {
+								val pauseMs = (elapsedMs * 0.15).toLong().coerceIn(5, 50)
+								try {
+									Thread.sleep(pauseMs)
+								} catch (_: InterruptedException) {
+									break
+								}
+							}
+							batchStartTime = System.nanoTime()
+							batchBytes = 0L
+						}
+					}
+				} catch (e: Throwable) {
+					if (!e.isNormalSocketClose(socket)) {
+						log("TCPNode writeThread: $e for $this")
+					}
+				} finally {
+					this.close()
 				}
-			} finally {
-				this.close()
 			}
 		}
 	}
@@ -190,7 +214,7 @@ class TCPNode(
 			var read: Int
 			var last = false
 			while (!last) {
-				if (closeRequested || socket.isClosed) break
+				if (isClosed()) break
 				read = istream.readMaxBytes(arr)
 				last = read < arr.size
 				send(TCPBlock(id, arr.copyOf(read), last))
@@ -201,7 +225,7 @@ class TCPNode(
 		}
 	}
 
-	fun send(block: TCPBlock) {
+	open fun send(block: TCPBlock) {
 		if (isClosed()) return
 		while (!isClosed()) {
 			if (outDeque.offer(block, 200, java.util.concurrent.TimeUnit.MILLISECONDS)) {
@@ -215,7 +239,7 @@ class TCPNode(
 		}
 	}
 
-	fun sendPriority(block: TCPBlock) {
+	open fun sendPriority(block: TCPBlock) {
 		if (isClosed()) return
 		while (!isClosed()) {
 			if (outDeque.offerFirst(block, 200, java.util.concurrent.TimeUnit.MILLISECONDS)) {
@@ -229,9 +253,31 @@ class TCPNode(
 		}
 	}
 
-	fun forceClose() {
+	/**
+	 * Bounded-wait offer used by a Bridge when forwarding blocks from one peer to another.
+	 * Prevents a slow/stalled recipient from blocking the sender's read thread indefinitely.
+	 */
+	fun offerBridgeBlock(block: TCPBlock, priority: Boolean, timeoutMs: Long = 5_000L): Boolean {
+		if (isClosed()) return false
+		val deadline = System.currentTimeMillis() + timeoutMs
+		while (!isClosed()) {
+			val wait = (deadline - System.currentTimeMillis()).coerceIn(1L, 200L)
+			val offered = if (priority) {
+				outDeque.offerFirst(block, wait, java.util.concurrent.TimeUnit.MILLISECONDS)
+			} else {
+				outDeque.offer(block, wait, java.util.concurrent.TimeUnit.MILLISECONDS)
+			}
+			if (offered) return true
+			if (System.currentTimeMillis() >= deadline) return false
+		}
+		return false
+	}
+
+	open fun forceClose() {
 		blockHandler.onNodeClosed(this)
-		closeAll(dos, dis, socket)
+		if (socket != null && dos != null && dis != null) {
+			closeAll(dos, dis, socket)
+		}
 	}
 
 	override fun close() {
@@ -245,11 +291,12 @@ class TCPNode(
 		forceClose()
 	}
 
-	fun isClosed(): Boolean {
-		return closeRequested || socket.isClosed || !socket.isConnected || socket.isInputShutdown || socket.isOutputShutdown
+	open fun isClosed(): Boolean {
+		val s = socket ?: return closeRequested
+		return closeRequested || s.isClosed || !s.isConnected || s.isInputShutdown || s.isOutputShutdown
 	}
 
 	override fun toString(): String {
-		return "Node $remoteAddress"
+		return "Node ${remoteAddress.address.hostAddress}:$remotePort"
 	}
 }

@@ -35,7 +35,7 @@ class ScanDiscover() {
 										.filter { !it.isLinkLocalAddress }
 										.distinct()
 									if (updatedList.isNotEmpty()) {
-										found(PeerAddressInfo(info.serverKey, updatedList, info.port, info.isRelay))
+										found(PeerAddressInfo(info.serverKey, updatedList, info.port, info.isRelay, info.isBridge))
 									}
 								} catch (e: Exception) {
 									debug("ScanDiscoverIP4: Error reading packet data")
