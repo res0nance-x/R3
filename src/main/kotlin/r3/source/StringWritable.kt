@@ -14,7 +14,7 @@ class StringWritable(val str: String) : Writable {
 	companion object {
 		fun read(dis: DataInputStream): StringWritable {
 			val len = dis.readInt()
-			if (len < 0 || len > 10_000_000) {
+			if (len !in 0..10_000_000) {
 				throw java.io.IOException("Invalid StringWritable length: $len")
 			}
 			val arr = ByteArray(len)
